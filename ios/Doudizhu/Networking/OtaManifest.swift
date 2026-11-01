@@ -30,7 +30,7 @@ struct OtaManifest: Decodable {
                 throw OtaError.invalidManifest("文件重复：\(file.path)")
             }
             guard file.size >= 0, file.sha256.count == 64,
-                  file.sha256.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) else {
+                  file.sha256.allSatisfy({ "0123456789abcdef".contains($0) }) else {
                 throw OtaError.invalidManifest("文件校验信息不合法：\(file.path)")
             }
             guard OtaPath.isSafeRelativeURL(file.url) else {
@@ -46,7 +46,7 @@ struct OtaManifest: Decodable {
 
     private static func validVersion(_ text: String) -> Bool {
         !text.isEmpty && text.count <= 32 && text.allSatisfy {
-            $0.unicodeScalars.allSatisfy(\.isASCII) && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "_" || $0 == "-")
+            $0.unicodeScalars.allSatisfy { $0.isASCII } && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "_" || $0 == "-")
         }
     }
 }
