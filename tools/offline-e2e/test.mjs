@@ -159,6 +159,15 @@ async function main() {
     if (hostCards < 17 || guestCards < 17) {
       throw new Error(`两人手牌不对: host=${hostCards} guest=${guestCards}`);
     }
+    const hostAiLabel = (await host.page.textContent('#ai-host-chip')) || '';
+    const guestAiLabel = (await guest.page.textContent('#ai-host-chip')) || '';
+    if (!hostAiLabel.includes('AI 推理') || !guestAiLabel.includes('AI 推理')) {
+      throw new Error(`AI 推理设备标签缺失: host=${hostAiLabel} guest=${guestAiLabel}`);
+    }
+    if (!hostAiLabel.includes('本机 iPad') || !guestAiLabel.includes('房主')) {
+      throw new Error(`AI 推理设备标签不对: host=${hostAiLabel} guest=${guestAiLabel}`);
+    }
+    console.log(`AI host labels: host=${hostAiLabel} guest=${guestAiLabel}`);
     if (errors.length) throw new Error(errors.join('\n'));
 
     await host.page.screenshot({ path: 'shots/offline-e2e-host-bid.png' });

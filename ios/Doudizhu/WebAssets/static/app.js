@@ -86,6 +86,8 @@
     meta: null,
     lanUrl: '',
     hello: null,
+    info: null,
+    aiHost: '',
 
     ws: null,
     connected: false,
@@ -1314,7 +1316,22 @@
     return map[v.phase] || '候场';
   }
 
+  function aiHostLabel() {
+    if (window.__manorAiHost) return String(window.__manorAiHost);
+    if (window.__MANOR_LOCAL__ || window.__MANOR_IOS__) {
+      const name = (S.profile && S.profile.id) || S.idDraft || '';
+      return name ? `${name} 的 iPad` : '本机 iPad';
+    }
+    return S.aiHost || '家里电脑';
+  }
+
   function renderTopbar(v) {
+    const aiChip = $('#ai-host-chip');
+    if (aiChip) {
+      const label = aiHostLabel();
+      aiChip.textContent = `AI 推理：${label}`;
+      aiChip.title = `AI 推理设备：${label}`;
+    }
     const pill = $('#round-pill');
     if (pill) {
       pill.textContent = (!v || !v.game)
@@ -2911,7 +2928,9 @@
       }
       if (infoRes.ok) {
         const info = await infoRes.json();
+        S.info = info;
         if (info && info.url) S.lanUrl = info.url;
+        if (info && info.ai && info.ai.host) S.aiHost = String(info.ai.host);
       }
     } catch (err) {
       /* 用内置兜底数据 */

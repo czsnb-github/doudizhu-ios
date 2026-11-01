@@ -823,6 +823,22 @@ img { display: block; max-width: 100%; }
   white-space: nowrap;
   box-shadow: 0 2px 0 rgba(80, 53, 20, .2);
 }
+
+.ai-host-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 250, 240, .16);
+  border: 1px solid rgba(255, 250, 240, .38);
+  backdrop-filter: blur(6px);
+  color: #fff9ea;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .topbar-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .topbar .icon-btn { width: 38px; height: 38px; background: rgba(255, 250, 240, .2); border-color: rgba(255, 250, 240, .58); box-shadow: 0 2px 0 rgba(30, 50, 32, .18); }
 .topbar .icon-btn svg { stroke: #fff9ea; width: 19px; height: 19px; }
@@ -1717,7 +1733,8 @@ img { display: block; max-width: 100%; }
   .brand.small { display: none; }
   .round-pill { font-size: 11.5px; padding: 5px 10px; }
   .mult-chip { font-size: 11.5px; padding: 5px 10px; }
-  .topbar-mid { gap: 6px; }
+  .topbar-mid { gap: 6px; flex-wrap: wrap; row-gap: 2px; }
+  .ai-host-chip { flex-basis: 100%; text-align: center; padding: 1px 4px; background: none; border: 0; font-size: 10.5px; max-width: none; opacity: .9; }
   .profile-chip { max-width: 164px; gap: 6px; padding: 4px 10px 4px 4px; }
   .profile-chip img { width: 34px; height: 34px; }
   .chip-copy b { font-size: 13px; max-width: 72px; }
@@ -2677,6 +2694,7 @@ body.stage-wide .hand-hint { font-size: 13px; min-height: 20px; }
 body.stage-wide .board-status { font-size: 16.5px; padding: 8px 15px; }
 body.stage-wide .round-pill { font-size: 14px; padding: 6px 12px; }
 body.stage-wide .mult-chip { font-size: 15px; padding: 7px 13px; }
+body.stage-wide .ai-host-chip { font-size: 12.5px; padding: 6px 12px; }
 body.stage-wide .seat-name { font-size: 19px; max-width: 190px; }
 body.stage-wide .seat-sub { font-size: 13.5px; gap: 8px; }
 body.stage-wide .seat-tag { font-size: 11.5px; padding: 2px 8px; }

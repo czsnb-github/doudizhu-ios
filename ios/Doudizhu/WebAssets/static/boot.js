@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261111a';
+  const VERSION = '20261112a';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -323,6 +323,7 @@
     const hosts = document.getElementById('nearby-hosts');
     const setStatus = (text) => { if (status) status.textContent = text; };
     if (event.type === 'hosting') {
+      window.__manorAiHost = '本机 iPad';
       setStatus(`牌桌已开：${event.name}，等家人加入…`);
       if (actions) actions.classList.add('hidden');
     } else if (event.type === 'browsing') {
@@ -345,6 +346,7 @@
       setStatus(list.length ? '选一张牌桌加入' : '正在找附近牌桌…');
     } else if (event.type === 'joined') {
       window.__manorPeerMode = true;
+      window.__manorAiHost = `${event.host || '房主'} 的 iPad`;
       setStatus(`已加入 ${event.host} 的牌桌，现在登录/进桌`);
       if (actions) actions.classList.add('hidden');
       if (hosts) hosts.innerHTML = '';
@@ -354,6 +356,7 @@
       setStatus(`家人 ${event.name} 离开了`);
     } else if (event.type === 'disconnected') {
       window.__manorPeerMode = false;
+      window.__manorAiHost = '';
       setStatus('联机断开了，重新找牌桌或继续本机单机');
       if (actions) actions.classList.remove('hidden');
     } else if (event.type === 'peerdata') {
@@ -367,6 +370,7 @@
       if (actions) actions.classList.remove('hidden');
     } else if (event.type === 'stopped') {
       window.__manorPeerMode = false;
+      window.__manorAiHost = '';
       setStatus('已离开联机');
       if (actions) actions.classList.remove('hidden');
     }
@@ -412,6 +416,7 @@
     };
     card.querySelector('[data-nearby-host-start]').addEventListener('click', () => {
       if (window.__manorPeerMode) return;
+      window.__manorAiHost = '本机 iPad';
       nearbyPost({ action: 'host', name: currentName() });
       if (document.getElementById('nearby-status')) document.getElementById('nearby-status').textContent = '正在开桌…';
     });
