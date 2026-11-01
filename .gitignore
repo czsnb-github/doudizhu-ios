@@ -22,3 +22,7 @@ ios/DerivedData/
 ios/simbuild/
 ios/simulator-lobby.png
 .DS_Store
+
+# offline e2e
+tools/offline-e2e/node_modules/
+tools/offline-e2e/shots/

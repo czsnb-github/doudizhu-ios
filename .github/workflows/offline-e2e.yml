@@ -1,0 +1,51 @@
+name: Offline two-client E2E
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright
+        working-directory: tools/offline-e2e
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Serve offline WebAssets
+        run: |
+          nohup python3 -m http.server 8080 --directory ios/Doudizhu/WebAssets > /tmp/http.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8080/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/http.log
+          exit 1
+
+      - name: Run two-client offline E2E
+        working-directory: tools/offline-e2e
+        env:
+          BASE_URL: http://127.0.0.1:8080/
+        run: node test.mjs
+
+      - name: Upload E2E screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-e2e-screenshots
+          path: tools/offline-e2e/shots/offline-e2e-*.png
+          if-no-files-found: warn
