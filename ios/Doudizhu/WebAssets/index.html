@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#3f6b4c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>摩尔庄园 · 斗地主</title>
+  <link rel="icon" href="/static/assets/avatars/mole_0.jpg">
+  <link rel="stylesheet" href="/static/style.css?v=20261101a">
+</head>
+<body>
+<div id="app">
+  <div id="conn" class="conn hidden"><span class="conn-dot"></span><span id="conn-text">正在连接…</span></div>
+
+  <!-- ============================== 登录 ============================== -->
+  <section id="screen-entry" class="screen entry">
+    <div class="entry-bg"></div>
+    <div class="entry-wash"></div>
+    <div class="leaf-drift" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+
+    <header class="entry-top">
+      <div class="brand">
+        <span class="brand-mark"><img src="/static/assets/avatars/mole_0.jpg" alt=""></span>
+        <span class="brand-text"><b>摩尔庄园</b><small>MOLE MANOR · 牌桌</small></span>
+      </div>
+      <div class="entry-top-actions">
+        <button id="show-lb" class="soft-btn" type="button">庄园榜</button>
+        <button id="sound-entry" class="icon-btn" type="button" aria-label="声音"></button>
+      </div>
+    </header>
+
+    <div class="entry-layout">
+      <div class="entry-hero">
+        <div class="hero-kicker"><i></i> SAME WI-FI · 同一张牌桌</div>
+        <h1>回庄园，<br><em>打一局斗地主</em></h1>
+        <p class="hero-copy">一副牌，三个人。带上你的拉姆，<br>和家里人坐到同一张牌桌前。</p>
+
+        <div class="hero-crew" aria-hidden="true">
+          <figure class="crew-card c1"><img src="/static/assets/avatars/mole_0.jpg" alt=""><figcaption>么么公主</figcaption></figure>
+          <figure class="crew-card c2"><img src="/static/assets/avatars/mole_6.jpg" alt=""><figcaption>摩乐乐</figcaption></figure>
+          <figure class="crew-card c3"><img src="/static/assets/avatars/mole_8.jpg" alt=""><figcaption>瑞琪</figcaption></figure>
+          <div class="crew-ram" id="hero-ram"></div>
+        </div>
+
+        <div class="lan-card">
+          <div class="lan-qr"><img id="entry-qr" alt="局域网访问二维码"></div>
+          <div class="lan-copy">
+            <b>手机扫码，直接入座</b>
+            <button id="entry-url" class="lan-url" type="button" title="复制访问地址">正在获取地址…</button>
+            <small>不用房间号 · 同一个 Wi-Fi · 数据留在这台电脑</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="entry-panel paper">
+        <div class="panel-tape"></div>
+        <div class="panel-head">
+          <span class="panel-kicker">TAKE A SEAT</span>
+          <h2 id="entry-title">报上你的名字</h2>
+          <p id="entry-sub">第一次来会建一份庄园档案，下次打开还在。</p>
+        </div>
+
+        <div id="returning" class="returning hidden"></div>
+
+        <label class="field-label" for="player-id">玩家 ID</label>
+        <div class="id-row">
+          <input id="player-id" class="input" maxlength="12" autocomplete="nickname" placeholder="比如：么么、小摩尔、阿花">
+          <button id="login-btn" class="btn btn-primary" type="button">进庄园</button>
+        </div>
+        <p id="id-hint" class="field-hint">只认 ID，不设密码。等级、胜场和拉姆都会记着。</p>
+
+        <div id="customize" class="customize hidden">
+          <div class="section-head">
+            <b>挑个形象</b>
+            <span id="roster-count">摩尔庄园 / 原神</span>
+          </div>
+          <div id="origin-tabs" class="tabs" role="tablist"></div>
+          <div id="avatar-grid" class="avatar-grid"></div>
+
+          <div class="section-head ram-head">
+            <b>你的拉姆</b>
+            <span id="ram-note">会跟着等级一起长大</span>
+          </div>
+          <div class="ram-editor">
+            <div id="ram-preview" class="ram-preview"></div>
+            <div class="ram-side">
+              <label class="field-label mini" for="ram-name">拉姆名字</label>
+              <input id="ram-name" class="input" maxlength="8" placeholder="小拉姆">
+              <div id="ram-colors" class="ram-colors" role="radiogroup" aria-label="拉姆颜色"></div>
+              <div id="ram-growth" class="ram-growth"></div>
+            </div>
+          </div>
+
+          <div class="section-head mini-head">
+            <b>AI 强度</b>
+            <span>进桌后也能调</span>
+          </div>
+          <div id="entry-diff" class="diff-row"></div>
+        </div>
+
+        <button id="enter-table" class="btn btn-primary btn-xl hidden" type="button">
+          坐到牌桌前 <small>同一张桌子，不用房间号</small>
+        </button>
+        <div class="panel-foot">
+          头像素材取自网络，仅作家庭局域网娱乐 · 头像只保存在本机
+          <a class="ios-download" data-ios-download href="/static/downloads/Doudizhu-unsigned.ipa?v=20261101a" download="庄园牌桌-未签名.ipa">
+            iOS 安装包 <small>.ipa · 需签名工具</small>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== 牌桌 ============================== -->
+  <section id="screen-table" class="screen table-screen hidden">
+    <div class="table-bg"></div>
+    <div class="table-wash"></div>
+
+    <header class="topbar">
+      <div class="brand small">
+        <span class="brand-mark"><img src="/static/assets/avatars/mole_0.jpg" alt=""></span>
+        <span class="brand-text"><b>庄园牌桌</b><small>MOLE MANOR</small></span>
+      </div>
+      <div class="topbar-mid">
+        <span id="round-pill" class="round-pill">等待开局</span>
+        <span id="mult-chip" class="mult-chip hidden">×1</span>
+      </div>
+      <div class="topbar-right">
+        <button id="sound-table" class="icon-btn" type="button" aria-label="声音"></button>
+        <button id="profile-chip" class="profile-chip" type="button" aria-label="打开我的档案">
+          <img id="chip-avatar" alt="">
+          <span class="chip-copy"><b id="chip-name">…</b><small id="chip-level">Lv.1</small></span>
+          <span id="chip-ram" class="chip-ram"></span>
+        </button>
+      </div>
+    </header>
+
+    <main class="table-stage">
+      <div class="scene">
+        <div id="seat-top" class="seat seat-top hidden"></div>
+        <div id="seat-left" class="seat seat-left"></div>
+        <div id="seat-right" class="seat seat-right"></div>
+
+        <div class="board">
+          <div class="board-stitch"></div>
+          <div class="board-head">
+            <div id="board-status" class="board-status"><span class="status-dot"></span>等待家人入座</div>
+            <div id="bottom-area" class="bottom-area hidden">
+              <span class="bottom-label">底牌</span>
+              <div id="bottom-cards" class="bottom-cards"></div>
+            </div>
+          </div>
+
+          <div id="center" class="center"></div>
+          <div id="play-top" class="play-zone play-top hidden"></div>
+          <div id="play-left" class="play-zone play-left hidden"></div>
+          <div id="play-right" class="play-zone play-right hidden"></div>
+          <div id="play-bottom" class="play-zone play-bottom hidden"></div>
+          <div id="lobby-panel" class="lobby-panel"></div>
+          <div id="bidding" class="float-bar bidding hidden"></div>
+          <div id="actions" class="float-bar actions hidden"></div>
+          <div class="board-watermark" aria-hidden="true">斗</div>
+        </div>
+      </div>
+
+      <div class="hand-dock">
+        <div class="hand-top">
+          <button type="button" id="hand-me" class="hand-me" aria-label="查看我的玩家详情">
+            <span class="mini-avatar"><img id="hand-avatar" alt=""></span>
+            <span class="hand-id">
+              <b id="hand-name">你</b>
+              <small id="hand-level">等待入座</small>
+              <span class="hand-xp" aria-hidden="true"><i id="hand-xp"></i></span>
+            </span>
+            <span id="hand-ready" class="hand-ready hidden">未准备</span>
+            <span id="hand-role" class="role-chip"></span>
+            <span id="hand-ram" class="hand-ram"></span>
+          </button>
+          <div class="hand-right">
+            <button id="hand-order" class="soft-btn order-btn hidden" type="button" aria-label="切换手牌顺序">小→大</button>
+            <span id="hand-score" class="hand-score"></span>
+            <button id="hand-next" class="soft-btn hand-next hidden" type="button">准备下一局</button>
+            <button id="spectate-sit" class="soft-btn hidden" type="button">入座</button>
+          </div>
+        </div>
+        <div id="hand" class="hand"></div>
+        <div id="hand-hint" class="hand-hint"></div>
+      </div>
+    </main>
+  </section>
+
+  <!-- 全局浮层：登录页与牌桌共用 -->
+  <div id="turn-glow" aria-hidden="true"></div>
+  <div id="drawer-root"></div>
+  <div id="modal-root"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script src="/static/boot.js?v=20261101c"></script>
+</body>
+</html>

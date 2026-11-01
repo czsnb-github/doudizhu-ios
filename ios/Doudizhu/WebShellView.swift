@@ -231,7 +231,7 @@ private struct LoadingOverlay: View {
     }
 }
 
-private struct WebTableView: UIViewRepresentable {
+struct WebTableView: UIViewRepresentable {
     let url: URL
     let onLoading: () -> Void
     let onReady: () -> Void

@@ -78,7 +78,7 @@ jobs:
           sleep 5
           xcrun simctl install "$SIM_UDID" simbuild/Build/Products/Debug-iphonesimulator/Doudizhu.app
           xcrun simctl launch "$SIM_UDID" com.molemanor.doudizhu
-          sleep 5
+          sleep 15
           xcrun simctl io "$SIM_UDID" screenshot simulator-lobby.png
           ls -lh simulator-lobby.png
 

@@ -10,7 +10,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.2.0"
+    MARKETING_VERSION: "0.3.0"
     CURRENT_PROJECT_VERSION: "1"
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1,2"
@@ -25,6 +25,9 @@ targets:
       - path: Doudizhu
         excludes:
           - Info.plist
+          - WebAssets
+      - path: Doudizhu/WebAssets
+        type: folder
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.molemanor.doudizhu
