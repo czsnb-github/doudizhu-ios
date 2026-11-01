@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 运行日志与本机档案（家庭数据不进仓库）
+server.log
+server.err
+dev-server.log
+data/
+backups/
+dev-data/
+dev-static/
+shots/
+
+# iOS 构建产物（工程由 XcodeGen 生成）
+ios/build/
+ios/artifacts/
+ios/*.xcodeproj/
+ios/DerivedData/
+.DS_Store

@@ -1,0 +1,65 @@
+name: iOS unsigned build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Unit tests (simulator)
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -project Doudizhu.xcodeproj \
+            -scheme Doudizhu \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Build unsigned app
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Doudizhu.xcodeproj \
+            -scheme Doudizhu \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/Payload
+          cp -R build/Build/Products/Release-iphoneos/Doudizhu.app artifacts/Payload/
+          cd artifacts
+          zip -qry Doudizhu-unsigned.ipa Payload
+          ls -lh Doudizhu-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Doudizhu-unsigned-ipa
+          path: ios/artifacts/Doudizhu-unsigned.ipa
+          if-no-files-found: error
