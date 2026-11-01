@@ -2,12 +2,115 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261104a';
+  const VERSION = '20261105a';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
   let activeSocket = null;
   let syncing = false;
+
+  let currentStage = 'boot';
+  let homeServerBase = 'http://192.168.31.182:8000';
+  let bootTrace = [];
+  const BOOT_TRACE_LIMIT = 40;
+  let failureReported = false;
+
+  function diagHandler() {
+    return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.manorDiag;
+  }
+
+  function diagPost(payload) {
+    const handler = diagHandler();
+    if (!handler) return false;
+    try {
+      handler.postMessage(payload);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function hasNativeDiag() {
+    return !!diagHandler();
+  }
+
+  function serverBase() {
+    return String(homeServerBase || '').replace(/\/+$/, '');
+  }
+
+  function trace(event, detail) {
+    try {
+      bootTrace.push({
+        at: new Date().toISOString(),
+        event: String(event || 'event'),
+        detail: detail || {},
+      });
+      if (bootTrace.length > BOOT_TRACE_LIMIT) bootTrace.shift();
+    } catch (err) { /* diagnostics must never break boot */ }
+  }
+
+  function setStage(name, detail) {
+    currentStage = String(name || 'unknown');
+    trace('boot.stage', { stage: currentStage, webVersion: VERSION, extra: detail || {} });
+    diagPost({ action: 'stage', stage: currentStage, webVersion: VERSION });
+  }
+
+  function directUploadFailure(err) {
+    if (hasNativeDiag()) return;
+    const message = String((err && err.message) || err || 'unknown');
+    const payload = {
+      schema: 1,
+      reason: 'bootError',
+      source: 'ios-web',
+      sentAt: new Date().toISOString(),
+      device: {
+        name: String(navigator.platform || 'ios-web'),
+        model: String(navigator.userAgent || ''),
+        system: String(navigator.userAgent || ''),
+      },
+      app: {},
+      web: { version: VERSION, stage: currentStage },
+      events: bootTrace.concat([{
+        at: new Date().toISOString(),
+        event: 'boot.error',
+        level: 'error',
+        detail: { message: message.slice(0, 2000), stage: currentStage },
+      }]),
+    };
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', serverBase() + '/api/clientlog', true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.timeout = 8000;
+      xhr.send(JSON.stringify(payload));
+    } catch (ignored) { /* native logger will retry on next launch */ }
+  }
+
+  function reportBootFailure(err, stage) {
+    if (failureReported) return;
+    failureReported = true;
+    const message = String((err && err.message) || err || 'unknown');
+    const stack = String((err && err.stack) || '');
+    trace('boot.error', { stage: stage || currentStage, message: message.slice(0, 2000) });
+    diagPost({
+      action: 'bootError',
+      message: message.slice(0, 2000),
+      stack: stack.slice(0, 4000),
+      detail: { stage: stage || currentStage, webVersion: VERSION, trace: bootTrace },
+    });
+    directUploadFailure(err);
+  }
+
+  window.__manorBootTrace = bootTrace;
+  window.addEventListener('error', (event) => {
+    if (hasNativeDiag() || window.__MANOR_READY__) return;
+    reportBootFailure(event.error || new Error(String(event.message || 'window error')), currentStage);
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    if (hasNativeDiag() || window.__MANOR_READY__) return;
+    const reason = event.reason;
+    reportBootFailure(reason instanceof Error ? reason : new Error(String(reason)), currentStage);
+  });
 
   window.__MANOR_LOCAL__ = true;
   window.__MANOR_IOS__ = true;
@@ -337,6 +440,7 @@
     const input = document.getElementById('ota-source-input');
     const setStatus = (text) => { if (status) status.textContent = text; };
     if (event.type === 'status') {
+      if (event.baseURL) homeServerBase = String(event.baseURL);
       if (version) {
         const shell = event.shellVersion ? `客户端 v${event.shellVersion}` : '';
         const web = event.effectiveVersion ? `离线包 v${event.effectiveVersion}` : '';
@@ -508,29 +612,48 @@
   }
 
   async function boot() {
+    setStage('boot.start');
     localUiPolish();
     splash('正在唤醒本机牌桌…');
     await loadScript('/pyodide/pyodide.js');
+    setStage('pyodide.script');
     pyodide = await loadPyodide({ indexURL: '/pyodide/' });
     pyodide.setStderr({ batched: (s) => console.warn('[py]', s) });
     pyodide.setStdout({ batched: (s) => console.log('[py]', s) });
+    setStage('pyodide.ready');
     splash('正在加载牌局引擎…');
     await pyodide.loadPackage('/packages/numpy-2.0.2-cp312-cp312-pyodide_2024_0_wasm32.whl');
+    setStage('numpy.ready');
     const buf = await (await fetch('/app-core.zip')).arrayBuffer();
     await pyodide.unpackArchive(new Uint8Array(buf), 'zip');
+    setStage('appcore.ready');
     splash('正在加载 DouZero 权重…');
     if (!pyodide.FS.analyzePath('/models').exists) pyodide.FS.mkdir('/models');
     const mBuf = await (await fetch('/models.zip')).arrayBuffer();
     await pyodide.unpackArchive(new Uint8Array(mBuf), 'zip', { extractDir: '/models' });
+    setStage('models.ready');
 
-    if (!pyodide.FS.analyzePath('/data').exists) pyodide.FS.mkdir('/data');
+    try {
+      if (!pyodide.FS.analyzePath('/data').exists) pyodide.FS.mkdir('/data');
+    } catch (err) {
+      trace('idbfs.mkdirFailed', { message: String(err && err.message || err) });
+    }
     try {
       pyodide.FS.mount(pyodide.IDBFS, {}, '/data');
     } catch (err) {
-      // 已挂载时忽略
+      // 已挂载时忽略；其他错误记录后继续，内存数据也能玩。
+      trace('idbfs.mountFailed', { message: String(err && err.message || err) });
     }
-    await new Promise((resolve, reject) => pyodide.FS.syncfs(true, (err) => err ? reject(err) : resolve()));
+    try {
+      await new Promise((resolve, reject) => pyodide.FS.syncfs(true, (err) => err ? reject(err) : resolve()));
+      setStage('idbfs.ready');
+    } catch (err) {
+      window.__MANOR_IDBFS_ERROR__ = String(err && err.message || err);
+      trace('idbfs.syncFailed', { message: window.__MANOR_IDBFS_ERROR__ });
+      console.warn('本机数据读取失败，先以空数据启动', err);
+    }
 
+    setStage('bridge.init');
     await pyodide.runPythonAsync(`
 import sys
 sys.path.insert(0, '/home/pyodide')
@@ -538,22 +661,28 @@ import local_bridge
 local_bridge.init('/data')
 `);
     bridge = pyodide.globals.get('local_bridge');
+    setStage('bridge.ready');
 
     installSender();
     installWebSocketShim();
     installFetchShim();
     splash('正在铺牌桌…');
+    setStage('app.load');
     await loadScript(APP_JS);
     setupNearby();
     setupOta();
     scheduleAutoSync(4000);
     hideSplash();
+    setStage('app.ready');
+    diagPost({ action: 'ready', webVersion: VERSION });
+    window.__MANOR_READY__ = true;
     setInterval(syncData, 2000);
     window.addEventListener('pagehide', syncData);
   }
 
   boot().catch((err) => {
     console.error(err);
+    reportBootFailure(err, currentStage);
     splash('本机引擎启动失败：' + (err && err.message ? err.message : err));
   });
 })();

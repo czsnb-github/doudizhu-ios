@@ -250,6 +250,8 @@ struct WebTableView: UIViewRepresentable {
         configuration.userContentController.add(NearbyManager.shared, name: "manorNearby")
         configuration.userContentController.add(OtaManager.shared, name: "manorOta")
         configuration.userContentController.add(SyncManager.shared, name: "manorSync")
+        configuration.userContentController.add(ClientLogger.shared, name: "manorDiag")
+        configuration.userContentController.addUserScript(ClientLogger.shared.userScript)
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: "window.__MANOR_IOS__ = true;",
@@ -263,6 +265,7 @@ struct WebTableView: UIViewRepresentable {
         NearbyManager.shared.bind(webView: webView)
         OtaManager.shared.bind(webView: webView)
         SyncManager.shared.bind(webView: webView)
+        ClientLogger.shared.bind(webView: webView)
         webView.allowsBackForwardNavigationGestures = false
         webView.allowsLinkPreview = false
         webView.isOpaque = false
@@ -292,6 +295,7 @@ struct WebTableView: UIViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "manorNearby")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "manorOta")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "manorSync")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "manorDiag")
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
@@ -305,11 +309,13 @@ struct WebTableView: UIViewRepresentable {
         func load(_ url: URL, in webView: WKWebView) {
             guard lastLoaded != url else { return }
             lastLoaded = url
+            ClientLogger.shared.stage("web.load", detail: ["url": url.absoluteString])
             parent.onLoading()
             webView.load(URLRequest(url: url))
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            ClientLogger.shared.stage("web.didStart")
             parent.onLoading()
         }
 
@@ -317,12 +323,25 @@ struct WebTableView: UIViewRepresentable {
             parent.onReady()
         }
 
+        private func isCancelled(_ error: Error) -> Bool {
+            (error as NSError).code == NSURLErrorCancelled
+        }
+
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            guard !isCancelled(error) else { return }
+            ClientLogger.shared.record("web.didFail", level: "error", detail: ["error": error.localizedDescription])
             parent.onFailure(error.localizedDescription)
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            guard !isCancelled(error) else { return }
+            ClientLogger.shared.record("web.didFailProvisional", level: "error", detail: ["error": error.localizedDescription])
             parent.onFailure(error.localizedDescription)
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            ClientLogger.shared.record("web.processTerminated", level: "error")
+            parent.onFailure("网页进程被系统终止，请重试；日志会自动上传")
         }
 
         @objc func threeFingerTap() {

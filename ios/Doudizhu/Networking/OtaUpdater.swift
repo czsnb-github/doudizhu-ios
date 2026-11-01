@@ -7,6 +7,8 @@ struct OtaState: Codable {
     var activeDirName: String?
     var previousVersion: String?
     var installedAt: String?
+    /// 启动失败被回退的版本；同一版本不会再次自动安装。
+    var rejectedVersion: String?
 }
 
 private struct OtaComplete: Codable {
@@ -107,6 +109,31 @@ final class OtaStore {
         activeRoot() == nil ? nil : readState().activeVersion
     }
 
+    func isRejected(_ version: String) -> Bool {
+        readState().rejectedVersion == version
+    }
+
+    /// 启动失败时回退到安装包；把坏版本记为 rejected，避免重启后再次装入。
+    func deactivate(rejected: String? = nil) {
+        var state = readState()
+        let active = state.activeVersion
+        state.previousVersion = active ?? state.previousVersion
+        if let rejected {
+            state.rejectedVersion = rejected
+        } else if let active {
+            state.rejectedVersion = active
+        }
+        state.activeVersion = nil
+        state.activeDirName = nil
+        do {
+            let data = try JSONEncoder().encode(state)
+            try data.write(to: stateURL, options: .atomic)
+        } catch {
+            // 回退失败也保持安装包可启动；状态写失败只记录，不阻断重试。
+            print("MANOR OTA deactivate failed: \(error.localizedDescription)")
+        }
+    }
+
     func makeStaging() throws -> URL {
         ensureDirectory(stagingDir)
         let dir = stagingDir.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -158,7 +185,8 @@ final class OtaStore {
             activeVersion: manifest.version,
             activeDirName: name,
             previousVersion: old.activeVersion,
-            installedAt: complete.installedAt
+            installedAt: complete.installedAt,
+            rejectedVersion: old.rejectedVersion
         )
         // 如果旧版本本来就是安装包自带的，不需要再把它记成“上一版”。
         if let previous = state.previousVersion,
@@ -345,6 +373,9 @@ final class OtaManager: NSObject, WKScriptMessageHandler {
                 try manifest.validate()
                 if OtaSemver.isOlder(shell, than: manifest.minShell) {
                     throw OtaError.needsNewShell(manifest.minShell)
+                }
+                if self.store.isRejected(manifest.version) {
+                    throw OtaError.invalidManifest("该离线包上次启动失败，已跳过，等下一个版本")
                 }
                 if !OtaVersion.isNewer(manifest.version, than: current) {
                     self.finishSuccess(["type": "latest", "version": current])

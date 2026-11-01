@@ -122,6 +122,26 @@ final class OtaTests: XCTestCase {
         XCTAssertEqual(sameBase.effectiveVersion(), "20261105a")
     }
 
+    func testDeactivateRejectsVersionAndFallsBackToBundle() throws {
+        let bundleRoot = try bundle(version: "20261102c")
+        let base = temp.appendingPathComponent("ota-reject", isDirectory: true)
+        let store = OtaStore(bundleRoot: bundleRoot, baseDir: base)
+        let staging = try store.makeStaging()
+        try write("<!doctype html>new", to: "index.html", under: staging)
+        try write("engine-new", to: "app-core.zip", under: staging)
+        try write("{\"version\":\"20261102d\"}", to: "web-version.json", under: staging)
+        let manifest = makeManifest(
+            version: "20261102d",
+            files: ["index.html", "app-core.zip", "web-version.json"]
+        )
+        try store.install(staging: staging, manifest: manifest)
+        XCTAssertNotNil(store.activeRoot())
+        store.deactivate(rejected: "20261102d")
+        XCTAssertNil(store.activeRoot())
+        XCTAssertTrue(store.isRejected("20261102d"))
+        XCTAssertEqual(store.effectiveVersion(), "20261102c")
+    }
+
     func testLocalServerResolvesOverlayThenBundleAndRejectsTraversal() throws {
         let bundleRoot = try bundle(version: "20261102c")
         let overlay = temp.appendingPathComponent("overlay", isDirectory: true)
