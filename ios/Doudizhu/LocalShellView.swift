@@ -8,6 +8,9 @@ struct LocalShellView: View {
 
     var body: some View {
         ZStack {
+            ManorTheme.cream
+                .ignoresSafeArea()
+
             if let url = model.url {
                 WebTableView(
                     url: url,
@@ -16,7 +19,6 @@ struct LocalShellView: View {
                     onFailure: { model.fail($0) },
                     onSettings: {}
                 )
-                .ignoresSafeArea()
             } else {
                 splash
             }
