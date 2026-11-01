@@ -87,7 +87,6 @@ jobs:
           xcrun simctl launch "$SIM_UDID" com.molemanor.doudizhu
           sleep 30
           xcrun simctl io "$SIM_UDID" screenshot simulator-lobby.png
-          xcrun simctl spawn "$SIM_UDID" log show --last 2m --style compact --predicate 'process == "Doudizhu"' | tail -120 || true
           ls -lh simulator-lobby.png
 
       - name: Upload simulator screenshot

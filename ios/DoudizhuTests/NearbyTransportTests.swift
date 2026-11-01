@@ -24,7 +24,10 @@ final class NearbyTransportTests: XCTestCase {
         super.tearDown()
     }
 
-    func testAdvertiseBrowseConnectAndSend() {
+    func testAdvertiseBrowseConnectAndSend() throws {
+#if targetEnvironment(simulator)
+        throw XCTSkip("MultipeerConnectivity 需要真机；模拟器没有蓝牙/点对点网络")
+#endif
         done = expectation(description: "MCS 往返")
         let suffix = UUID().uuidString.prefix(6)
         let hostID = MCPeerID(displayName: "host-\(suffix)")
