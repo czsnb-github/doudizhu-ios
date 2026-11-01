@@ -18,7 +18,6 @@ final class TableBrowser {
     func start() {
         stop()
         let parameters = NWParameters.tcp
-        parameters.includePeerToPeer = true
         let browser = NWBrowser(
             for: .bonjour(type: "_doudizhu._tcp", domain: nil),
             using: parameters

@@ -24,7 +24,6 @@ final class TableClient {
     func connect(to endpoint: NWEndpoint) {
         disconnect()
         let parameters = NWParameters.tcp
-        parameters.includePeerToPeer = true
         let connection = NWConnection(to: endpoint, using: parameters)
         let peer = LinePeer(connection: connection)
 

@@ -29,8 +29,7 @@ final class TableHost {
         stop()
         do {
             let parameters = NWParameters.tcp
-            parameters.includePeerToPeer = true
-            let listener = try NWListener(using: parameters)
+                let listener = try NWListener(using: parameters)
             if advertise {
                 listener.service = NWListener.Service(
                     name: "\(hostName)的牌桌",
