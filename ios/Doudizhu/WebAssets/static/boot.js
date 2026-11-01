@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261102d';
+  const VERSION = '20261103a';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -394,15 +394,17 @@
       setStatus('正在和家中服务器合并档案…');
     } else if (event.type === 'done') {
       let merged = 0;
+      let historyAdded = 0;
       try {
         if (bridge && event.payload) {
           const result = JSON.parse(bridge.sync_import(JSON.stringify(event.payload)));
           merged = Array.isArray(result.players) ? result.players.length : 0;
+          historyAdded = Number(result.history_added || event.historyAdded || 0);
         }
       } catch (err) {
         console.error(err);
       }
-      setStatus(`同步完成：合并了 ${merged || event.count || 0} 个档案`);
+      setStatus(`同步完成：档案 ${merged || event.count || 0} 个，牌谱新增 ${historyAdded} 局`);
     } else if (event.type === 'noLocal') {
       setStatus('本机还没有档案，先登录一次再同步');
     } else if (event.type === 'error') {

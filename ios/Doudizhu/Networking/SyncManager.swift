@@ -62,7 +62,7 @@ final class SyncManager: NSObject, WKScriptMessageHandler {
         }
         syncing = true
         emit(["type": "syncing", "quiet": auto])
-        let url = HomeServer.url.appendingPathComponent("api/sync/profiles")
+        let url = HomeServer.url.appendingPathComponent("api/sync/data")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -86,14 +86,14 @@ final class SyncManager: NSObject, WKScriptMessageHandler {
                       let merged = object["players"] as? [[String: Any]] else {
                     throw OtaError.badResponse
                 }
-                self.finishSuccess(merged: merged)
+                self.finishSuccess(response: object, players: merged)
             } catch {
                 self.finishFailure(error, auto: auto)
             }
         }
     }
 
-    private func finishSuccess(merged: [[String: Any]]) {
+    private func finishSuccess(response: [String: Any], players: [[String: Any]]) {
         DispatchQueue.main.async {
             self.syncing = false
             let now = Date()
@@ -101,8 +101,9 @@ final class SyncManager: NSObject, WKScriptMessageHandler {
             UserDefaults.standard.set(now, forKey: Self.lastSyncKey)
             self.emit([
                 "type": "done",
-                "count": merged.count,
-                "payload": ["players": merged],
+                "count": players.count,
+                "historyAdded": (response["history_added"] as? Int) ?? 0,
+                "payload": response,
             ])
             self.emitStatus()
         }
