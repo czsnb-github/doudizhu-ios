@@ -34,15 +34,16 @@ struct ManorCard<Content: View>: View {
             .padding(22)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
+                // 阴影只挂在背景形状上；挂在整张卡上会让卡内文字出现重影。
                 RoundedRectangle(cornerRadius: ManorTheme.panelRadius, style: .continuous)
                     .fill(ManorTheme.paper)
+                    .shadow(color: ManorTheme.panelShadow, radius: 0, x: 0, y: 6)
+                    .shadow(color: ManorTheme.shadow, radius: 22, x: 0, y: 14)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: ManorTheme.panelRadius, style: .continuous)
                     .strokeBorder(ManorTheme.line.opacity(0.18), lineWidth: 1.5)
             )
-            .shadow(color: ManorTheme.panelShadow, radius: 0, x: 0, y: 6)
-            .shadow(color: ManorTheme.shadow, radius: 22, x: 0, y: 14)
     }
 }
 
