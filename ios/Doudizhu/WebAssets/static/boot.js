@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261103a';
+  const VERSION = '20261104a';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -338,8 +338,9 @@
     const setStatus = (text) => { if (status) status.textContent = text; };
     if (event.type === 'status') {
       if (version) {
-        const active = event.activeVersion ? ` · 已更新 ${event.activeVersion}` : '';
-        version.textContent = `v${event.effectiveVersion || '未知'}${active}`;
+        const shell = event.shellVersion ? `客户端 v${event.shellVersion}` : '';
+        const web = event.effectiveVersion ? `离线包 v${event.effectiveVersion}` : '';
+        version.textContent = [shell, web].filter(Boolean).join(' · ') || '版本未知';
       }
       if (input && document.activeElement !== input && event.baseURL) {
         input.value = event.baseURL;
