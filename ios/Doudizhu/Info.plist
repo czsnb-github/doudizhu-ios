@@ -35,6 +35,7 @@
 	<array>
 		<string>_doudizhu._tcp</string>
 		<string>_doudizhu-mc._tcp</string>
+		<string>_manor-ddz._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>用于在同一 Wi-Fi 或同一房间内发现并连接家人的牌桌。</string>

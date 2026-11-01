@@ -247,6 +247,7 @@ struct WebTableView: UIViewRepresentable {
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(NearbyManager.shared, name: "manorNearby")
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: "window.__MANOR_IOS__ = true;",
@@ -257,6 +258,7 @@ struct WebTableView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        NearbyManager.shared.bind(webView: webView)
         webView.allowsBackForwardNavigationGestures = false
         webView.allowsLinkPreview = false
         webView.isOpaque = false
@@ -283,6 +285,7 @@ struct WebTableView: UIViewRepresentable {
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.stopLoading()
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "manorNearby")
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
