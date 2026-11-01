@@ -105,27 +105,34 @@ async function main() {
   const stopRelay = await startRelay(host.page, guest.page);
 
   try {
+    console.log('step: host host');
     await host.page.fill('#player-id', '房主');
     await host.page.click('[data-nearby-host-start]');
     await host.page.waitForFunction(() => (document.querySelector('#nearby-status')?.textContent || '').includes('牌桌已开'), { timeout: 10000 });
+    console.log('step: host login');
     await host.page.click('#login-btn');
     await host.page.waitForSelector('#customize:not(.hidden)', { timeout: 25000 });
     await host.page.click('#enter-table');
     await sleep(800);
 
+    console.log('step: guest browse/join');
     await guest.page.fill('#player-id', '客人');
     await guest.page.click('[data-nearby-browse]');
     await guest.page.waitForSelector('[data-nearby-host="房主的牌桌"]', { timeout: 15000 });
     await guest.page.click('[data-nearby-host="房主的牌桌"]');
     await guest.page.waitForFunction(() => window.__manorPeerMode === true, { timeout: 15000 });
+    console.log('step: guest login');
     await guest.page.click('#login-btn');
     await guest.page.waitForSelector('#customize:not(.hidden)', { timeout: 25000 });
     await guest.page.click('#enter-table');
     await guest.page.waitForTimeout(1200);
 
+    console.log('step: wait host sees guest');
     await host.page.waitForFunction(() => document.body.innerText.includes('客人'), { timeout: 20000 });
+    console.log('step: prepare');
     await prepare(host.page);
     await prepare(guest.page);
+    console.log('step: wait bidding');
 
     await Promise.all([
       host.page.waitForSelector('#bidding:not(.hidden) [data-call="1"], #actions:not(.hidden)', { timeout: 30000 }),
@@ -165,6 +172,10 @@ async function main() {
       guestXp: guestProfile.xp,
       guestLevel: guestProfile.level,
     }));
+  } catch (err) {
+    try { await host.page.screenshot({ path: 'shots/offline-e2e-host-fail.png' }); } catch (shotErr) {}
+    try { await guest.page.screenshot({ path: 'shots/offline-e2e-guest-fail.png' }); } catch (shotErr) {}
+    throw err;
   } finally {
     await stopRelay();
     await host.context.close();

@@ -41,11 +41,16 @@ jobs:
         working-directory: tools/offline-e2e
         env:
           BASE_URL: http://127.0.0.1:8080/
-        run: node test.mjs
+        run: |
+          set -o pipefail
+          node test.mjs 2>&1 | tee e2e.log
 
-      - name: Upload E2E screenshots
+      - name: Upload E2E debug
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: offline-e2e-screenshots
-          path: tools/offline-e2e/shots/offline-e2e-*.png
+          name: offline-e2e-debug
+          path: |
+            tools/offline-e2e/e2e.log
+            tools/offline-e2e/shots/offline-e2e-*.png
           if-no-files-found: warn
