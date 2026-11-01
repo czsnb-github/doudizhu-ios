@@ -49,7 +49,7 @@ jobs:
           echo "使用模拟器 ${UDID} (${RUNTIME})"
 
       - name: Unit tests (simulator)
-        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.skip_tests }}
+        if: ${{ !inputs.skip_tests }}
         working-directory: ios
         run: |
           set -euo pipefail
