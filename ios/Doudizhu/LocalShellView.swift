@@ -82,7 +82,11 @@ final class LocalShellModel: ObservableObject {
     func start() {
         guard !started else { return }
         // 单测宿主也会启动 App；不要在测试进程里加载 50MB 的 Pyodide。
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+        let env = ProcessInfo.processInfo.environment
+        let isTesting = env["XCTestConfigurationFilePath"] != nil
+            || env["XCTestBundlePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+        if isTesting {
             return
         }
         started = true
