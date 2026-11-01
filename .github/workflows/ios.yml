@@ -34,7 +34,7 @@ jobs:
           fi
           UDID=$(xcrun simctl create "CI iPhone" "$DEVTYPE" "$RUNTIME")
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
-          echo "使用模拟器 $UDID（$RUNTIME）"
+          echo "使用模拟器 ${UDID} (${RUNTIME})"
 
       - name: Unit tests (simulator)
         working-directory: ios
