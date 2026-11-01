@@ -64,5 +64,7 @@ schemes:
       config: Debug
       targets:
         - DoudizhuTests
+      environmentVariables:
+        MANOR_DISABLE_LOCAL_UI: "1"
     archive:
       config: Release
