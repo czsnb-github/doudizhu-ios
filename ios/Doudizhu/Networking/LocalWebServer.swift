@@ -2,19 +2,32 @@ import Foundation
 import Network
 
 /// 只给 WKWebView 用的本机静态文件服务，端口固定，保证 IndexedDB 的 origin 稳定。
+/// `overlayRoot` 是 OTA 下载的新 Web/引擎文件；缺失的文件自动回落到安装包。
 final class LocalWebServer {
     static let port: UInt16 = 8765
 
     private let queue = DispatchQueue(label: "manor.local.web")
     private var listener: NWListener?
-    private let root: URL
+    private let bundleRoot: URL
+    private let overlayRoot: URL?
 
-    init() {
-        if let dir = Bundle.main.url(forResource: "WebAssets", withExtension: nil) {
-            root = dir
+    init(bundleRoot: URL? = nil, overlayRoot: URL? = nil) {
+        if let bundleRoot {
+            self.bundleRoot = bundleRoot
+        } else if let dir = Bundle.main.url(forResource: "WebAssets", withExtension: nil) {
+            self.bundleRoot = dir
         } else {
-            root = Bundle.main.bundleURL
+            self.bundleRoot = Bundle.main.bundleURL
         }
+        self.overlayRoot = overlayRoot
+    }
+
+    var servedRootDescription: String {
+        let bundle = bundleRoot.path
+        if let overlayRoot {
+            return "overlay=\(overlayRoot.path) bundle=\(bundle)"
+        }
+        return "bundle=\(bundle)"
     }
 
     func start(onReady: @escaping () -> Void, onError: @escaping (String) -> Void) {
@@ -30,7 +43,7 @@ final class LocalWebServer {
             listener.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
-                    print("MANOR local server ready root=\(self?.root.path ?? "")")
+                    print("MANOR local server ready \(self?.servedRootDescription ?? "")")
                     DispatchQueue.main.async { onReady() }
                 case .failed(let error):
                     DispatchQueue.main.async { onError(error.localizedDescription) }
@@ -122,20 +135,9 @@ final class LocalWebServer {
         if relative.isEmpty {
             relative = "index.html"
         }
-        let candidate = root.appendingPathComponent(relative).standardizedFileURL
-        let rootPath = root.standardizedFileURL.path
-        guard candidate.path == rootPath || candidate.path.hasPrefix(rootPath + "/") else {
-            sendStatus(connection, code: 403, text: "Forbidden")
-            return
-        }
-        var fileURL = candidate
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory) else {
+        guard let fileURL = resolve(relative: relative) else {
             sendStatus(connection, code: 404, text: "Not Found")
             return
-        }
-        if isDirectory.boolValue {
-            fileURL = fileURL.appendingPathComponent("index.html")
         }
         guard let body = try? Data(contentsOf: fileURL) else {
             sendStatus(connection, code: 404, text: "Not Found")
@@ -157,6 +159,30 @@ final class LocalWebServer {
                 connection.cancel()
             })
         })
+    }
+
+    /// OTA 覆盖层优先，缺的文件回落到安装包；两层都做目录越界检查。
+    func resolve(relative: String) -> URL? {
+        for root in [overlayRoot, bundleRoot].compactMap({ $0 }) {
+            let rootPath = root.standardizedFileURL.path
+            let candidate = root.appendingPathComponent(relative).standardizedFileURL
+            guard candidate.path == rootPath || candidate.path.hasPrefix(rootPath + "/") else {
+                continue
+            }
+            var fileURL = candidate
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory) else {
+                continue
+            }
+            if isDirectory.boolValue {
+                fileURL = fileURL.appendingPathComponent("index.html")
+                var nested: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &nested),
+                      !nested.boolValue else { continue }
+            }
+            return fileURL
+        }
+        return nil
     }
 
     private func sendStatus(_ connection: NWConnection, code: Int, text: String) {

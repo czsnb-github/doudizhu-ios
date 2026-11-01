@@ -26,3 +26,6 @@ ios/simulator-lobby.png
 # offline e2e
 tools/offline-e2e/node_modules/
 tools/offline-e2e/shots/
+
+# OTA 产物（本机部署生成，不进仓库）
+static/ota/

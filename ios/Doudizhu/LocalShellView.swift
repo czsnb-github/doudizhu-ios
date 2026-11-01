@@ -96,7 +96,8 @@ final class LocalShellModel: ObservableObject {
         }
         started = true
         errorText = nil
-        let server = LocalWebServer()
+        let ota = OtaStore()
+        let server = LocalWebServer(overlayRoot: ota.activeRoot())
         self.server = server
         server.start(onReady: { [weak self] in
             guard let self else { return }

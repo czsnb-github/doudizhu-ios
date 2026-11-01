@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261101c';
+  const VERSION = '20261102d';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -105,9 +105,10 @@
       send(data) {
         if (this.readyState !== LocalWebSocket.OPEN || !bridge) return;
         const text = String(data);
+        let message = null;
+        try { message = JSON.parse(text); } catch (err) { message = null; }
+        if (message && message.type === 'login') scheduleAutoSync(1800);
         if (window.__manorPeerMode) {
-          let message = null;
-          try { message = JSON.parse(text); } catch (err) { message = null; }
           if (message && message.type === 'login') {
             try {
               const profileText = bridge.ensure_profile(String(message.id || ''));
@@ -313,6 +314,185 @@
     });
   }
 
+  function otaHandler() {
+    return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.manorOta;
+  }
+
+  function otaPost(payload) {
+    const handler = otaHandler();
+    if (!handler) return false;
+    try {
+      handler.postMessage(payload);
+      return true;
+    } catch (err) {
+      console.error(err);
+      return false;
+    }
+  }
+
+  window.manorOtaEvent = function (event) {
+    if (!event || typeof event !== 'object') return;
+    const status = document.getElementById('ota-status');
+    const version = document.getElementById('ota-version');
+    const input = document.getElementById('ota-source-input');
+    const setStatus = (text) => { if (status) status.textContent = text; };
+    if (event.type === 'status') {
+      if (version) {
+        const active = event.activeVersion ? ` · 已更新 ${event.activeVersion}` : '';
+        version.textContent = `v${event.effectiveVersion || '未知'}${active}`;
+      }
+      if (input && document.activeElement !== input && event.baseURL) {
+        input.value = event.baseURL;
+      }
+      if (event.checking) setStatus('正在检查更新…');
+      else if (event.lastError) setStatus(`更新源暂时连不上：${event.lastError}（单机不受影响）`);
+      else if (event.lastChecked) setStatus(`上次检查：${event.lastChecked}`);
+    } else if (event.type === 'checking') {
+      setStatus('正在检查更新…');
+    } else if (event.type === 'downloading') {
+      const pct = event.totalBytes > 0 ? Math.round((event.doneBytes / event.totalBytes) * 100) : 0;
+      setStatus(`正在下载离线包 ${pct}%${event.total ? `（${event.done}/${event.total}）` : ''}…`);
+    } else if (event.type === 'latest') {
+      setStatus('已经是最新离线包');
+    } else if (event.type === 'ready') {
+      setStatus(`新离线包 ${event.version} 已装好，下次打开自动生效`);
+    } else if (event.type === 'needsShell') {
+      setStatus(`新包需要 0.5.0 以上的安装包（${event.minShell}），先更新一次 IPA`);
+    } else if (event.type === 'sourceSaved') {
+      setStatus('服务器地址已保存');
+      const panel = document.getElementById('ota-source');
+      if (panel) panel.classList.add('hidden');
+    } else if (event.type === 'error') {
+      setStatus(`${event.message || '更新失败'}（单机不受影响）`);
+    }
+  };
+
+  function syncHandler() {
+    return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.manorSync;
+  }
+
+  function syncPost(payload) {
+    const handler = syncHandler();
+    if (!handler) return false;
+    try {
+      handler.postMessage(payload);
+      return true;
+    } catch (err) {
+      console.error(err);
+      return false;
+    }
+  }
+
+  window.manorSyncEvent = function (event) {
+    if (!event || typeof event !== 'object') return;
+    const status = document.getElementById('sync-status');
+    const setStatus = (text) => { if (status) status.textContent = text; };
+    if (event.type === 'status') {
+      if (event.lastSync) setStatus(`档案上次同步：${event.lastSync}`);
+      else setStatus('连上家中服务器后自动合并档案');
+    } else if (event.type === 'syncing') {
+      setStatus('正在和家中服务器合并档案…');
+    } else if (event.type === 'done') {
+      let merged = 0;
+      try {
+        if (bridge && event.payload) {
+          const result = JSON.parse(bridge.sync_import(JSON.stringify(event.payload)));
+          merged = Array.isArray(result.players) ? result.players.length : 0;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+      setStatus(`同步完成：合并了 ${merged || event.count || 0} 个档案`);
+    } else if (event.type === 'noLocal') {
+      setStatus('本机还没有档案，先登录一次再同步');
+    } else if (event.type === 'error') {
+      setStatus(event.quiet ? '家中服务器暂时连不上，单机照常玩' : `同步失败：${event.message || '未知错误'}`);
+    }
+  };
+
+  let lastAutoSyncAt = 0;
+
+  function syncNow(auto) {
+    if (!bridge || !syncHandler()) return;
+    if (auto && Date.now() - lastAutoSyncAt < 60000) return;
+    let payload = { players: [] };
+    try {
+      payload = JSON.parse(bridge.sync_export());
+    } catch (err) {
+      payload = { players: [] };
+    }
+    const hasPlayers = payload && Array.isArray(payload.players) && payload.players.length > 0;
+    if (auto && !hasPlayers) return;
+    lastAutoSyncAt = Date.now();
+    syncPost({ action: 'sync', payload: payload || { players: [] }, auto: !!auto });
+  }
+
+  function scheduleAutoSync(delay) {
+    setTimeout(() => syncNow(true), delay || 2500);
+  }
+
+  function setupOta() {
+    if (!otaHandler()) return;
+    if (document.getElementById('ota-card')) return;
+    const hero = document.querySelector('.entry-hero');
+    if (!hero) return;
+    if (!document.getElementById('ota-style')) {
+      const style = document.createElement('style');
+      style.id = 'ota-style';
+      style.textContent = [
+        '.ota-card{display:flex;flex-direction:column;gap:8px;margin-top:12px;padding:12px 14px;border:2px dashed rgba(92,110,74,.28);border-radius:18px;background:rgba(255,250,240,.62);max-width:100%}',
+        '.ota-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.ota-head b{font-size:14px;color:#384f38}.ota-head small{font-size:11px;color:#748167}',
+        '.ota-status{font-size:12px;line-height:1.5;color:#7d6a55}',
+        '.sync-status{font-size:12px;line-height:1.5;color:#5f7a5a;margin-top:-2px}',
+        '.ota-actions{display:flex;gap:8px;flex-wrap:wrap}.ota-btn{padding:8px 14px;border-radius:999px;border:1.5px solid rgba(79,125,87,.3);background:rgba(220,235,212,.4);color:#2f523d;font-size:12.5px;font-weight:800}.ota-btn.primary{background:#4f7d57;color:#fff;border-color:#4f7d57}.ota-btn:active{transform:translateY(1px)}',
+        '.ota-source{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.ota-source input{flex:1 1 180px;min-width:0;padding:8px 11px;border-radius:12px;border:1px solid rgba(110,83,59,.22);background:rgba(255,250,240,.9);font-size:12px;color:#3b3026}',
+        '.manor-local .ota-card{display:flex!important}',
+      ].join('\n');
+      document.head.appendChild(style);
+    }
+    const card = document.createElement('div');
+    card.id = 'ota-card';
+    card.className = 'ota-card';
+    card.innerHTML = [
+      '<div class="ota-head"><b>家中服务器</b><small id="ota-version">读取中…</small></div>',
+      '<div class="ota-status" id="ota-status">单机也能玩；有网时从家里服务器检查更新</div>',
+      '<div class="sync-status" id="sync-status">连上家中服务器后自动合并档案</div>',
+      '<div class="ota-actions">',
+      '<button type="button" class="ota-btn primary" data-ota-check>检查更新</button>',
+      '<button type="button" class="ota-btn" data-sync-now>同步数据</button>',
+      '<button type="button" class="ota-btn" data-ota-source-toggle>服务器</button>',
+      '</div>',
+      '<div class="ota-source hidden" id="ota-source">',
+      '<input id="ota-source-input" type="url" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="http://192.168.31.182:8000">',
+      '<button type="button" class="ota-btn" data-ota-source-save>保存</button>',
+      '</div>',
+    ].join('');
+    const nearby = document.getElementById('nearby-card');
+    if (nearby && nearby.parentNode === hero) nearby.insertAdjacentElement('afterend', card);
+    else hero.appendChild(card);
+    card.querySelector('[data-ota-check]').addEventListener('click', () => {
+      document.getElementById('ota-status').textContent = '正在检查更新…';
+      otaPost({ action: 'check', manual: true });
+    });
+    card.querySelector('[data-sync-now]').addEventListener('click', () => {
+      document.getElementById('sync-status').textContent = '正在同步…';
+      syncNow(false);
+    });
+    card.querySelector('[data-ota-source-toggle]').addEventListener('click', () => {
+      const panel = document.getElementById('ota-source');
+      if (panel) panel.classList.toggle('hidden');
+    });
+    card.querySelector('[data-ota-source-save]').addEventListener('click', () => {
+      const input = document.getElementById('ota-source-input');
+      const value = input && input.value ? String(input.value).trim() : '';
+      if (!value) return;
+      otaPost({ action: 'setBase', base: value });
+    });
+    otaPost({ action: 'status' });
+    otaPost({ action: 'check', auto: true });
+    syncPost({ action: 'status' });
+  }
+
   function installSender() {
     window.__manorSend = (text) => {
       if (activeSocket && activeSocket.readyState === 1 && activeSocket.onmessage) {
@@ -362,6 +542,8 @@ local_bridge.init('/data')
     splash('正在铺牌桌…');
     await loadScript(APP_JS);
     setupNearby();
+    setupOta();
+    scheduleAutoSync(4000);
     hideSplash();
     setInterval(syncData, 2000);
     window.addEventListener('pagehide', syncData);
