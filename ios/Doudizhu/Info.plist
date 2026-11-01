@@ -22,12 +22,22 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>用于在同一房间内通过蓝牙发现家人的牌桌。</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_doudizhu._tcp</string>
+		<string>_doudizhu-mc._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>用于在同一 Wi-Fi 下发现并连接家人的牌桌。</string>
+	<string>用于在同一 Wi-Fi 或同一房间内发现并连接家人的牌桌。</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>

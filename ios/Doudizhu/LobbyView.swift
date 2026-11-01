@@ -322,7 +322,7 @@ struct LobbyView: View {
     }
 }
 
-private struct ManorBackground: View {
+struct ManorBackground: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {

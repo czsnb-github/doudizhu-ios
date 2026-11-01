@@ -4,7 +4,7 @@ import SwiftUI
 struct DoudizhuApp: App {
     var body: some Scene {
         WindowGroup {
-            LobbyView()
+            WebShellView()
                 .preferredColorScheme(.light)
                 .tint(ManorTheme.green)
         }
