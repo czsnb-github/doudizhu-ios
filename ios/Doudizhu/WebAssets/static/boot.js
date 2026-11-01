@@ -2,12 +2,13 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261105a';
+  const VERSION = '20261109a';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
   let activeSocket = null;
   let syncing = false;
+  let pendingLoginText = null;
 
   let currentStage = 'boot';
   let homeServerBase = 'http://192.168.31.182:8000';
@@ -211,6 +212,10 @@
         let message = null;
         try { message = JSON.parse(text); } catch (err) { message = null; }
         if (message && message.type === 'login') scheduleAutoSync(1800);
+        if (message && message.type === 'login' && !window.__manorPeerMode
+            && queueLoginForSync(text, message)) {
+          return;
+        }
         if (window.__manorPeerMode) {
           if (message && message.type === 'login') {
             try {
@@ -510,32 +515,122 @@
         console.error(err);
       }
       setStatus(`同步完成：档案 ${merged || event.count || 0} 个，牌谱新增 ${historyAdded} 局`);
+      diagPost({ action: 'log', level: 'info', event: 'sync.done',
+        detail: { players: merged || event.count || 0, history_added: historyAdded } });
+      notifySyncFinished();
     } else if (event.type === 'noLocal') {
       setStatus('本机还没有档案，先登录一次再同步');
+      notifySyncFinished();
     } else if (event.type === 'error') {
       setStatus(event.quiet ? '家中服务器暂时连不上，单机照常玩' : `同步失败：${event.message || '未知错误'}`);
+      diagPost({ action: 'log', level: 'error', event: 'sync.error',
+        detail: { message: event.message || 'sync failed', quiet: !!event.quiet } });
+      notifySyncFinished();
     }
   };
+
+  function notifySyncFinished() {
+    try { window.dispatchEvent(new Event('manor-sync-finished')); } catch (err) {}
+  }
 
   let lastAutoSyncAt = 0;
 
   function syncNow(auto) {
-    if (!bridge || !syncHandler()) return;
+    if (!bridge) return;
     if (auto && Date.now() - lastAutoSyncAt < 60000) return;
-    let payload = { players: [] };
+    let payload = { players: [], history: [] };
     try {
       payload = JSON.parse(bridge.sync_export());
     } catch (err) {
-      payload = { players: [] };
+      payload = { players: [], history: [] };
     }
     const hasPlayers = payload && Array.isArray(payload.players) && payload.players.length > 0;
-    if (auto && !hasPlayers) return;
     lastAutoSyncAt = Date.now();
+    if (!hasPlayers || !syncHandler()) {
+      // 新设备还没有本机档案，原生同步会拒绝空 payload；直接拉服务器全家档案。
+      directPull();
+      return;
+    }
     syncPost({ action: 'sync', payload: payload || { players: [] }, auto: !!auto });
   }
 
   function scheduleAutoSync(delay) {
     setTimeout(() => syncNow(true), delay || 2500);
+  }
+
+  function directPull() {
+    if (!bridge) return;
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', serverBase() + '/api/sync/data', true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.timeout = 8000;
+      xhr.onload = function () {
+        if (xhr.status !== 200) return;
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (!data || !Array.isArray(data.players)) return;
+          bridge.sync_import(JSON.stringify(data));
+          diagPost({ action: 'log', level: 'info', event: 'sync.pull',
+            detail: { players: data.players.length, history: (data.history || []).length } });
+          notifySyncFinished();
+        } catch (err) { console.error(err); }
+      };
+      xhr.send(JSON.stringify({ players: [], history: [] }));
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function maybeSyncAfterState(text) {
+    try {
+      const msg = JSON.parse(String(text || ''));
+      if (!msg || msg.type !== 'state') return;
+      const ended = msg.phase === 'ended' || (msg.game && msg.game.phase === 'ended');
+      if (ended) setTimeout(() => syncNow(true), 1800);
+    } catch (err) { /* not a state message */ }
+  }
+
+  function syncAndWait(timeoutMs) {
+    if (!syncHandler() || !bridge) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        window.removeEventListener('manor-sync-finished', finish);
+        resolve(true);
+      };
+      const timer = setTimeout(finish, timeoutMs || 2600);
+      window.addEventListener('manor-sync-finished', finish);
+      syncNow(false);
+    });
+  }
+
+  // ID 就是登录态：先把该 ID（以及服务器上的家人档案）合并回来，再真正 attach。
+  // 服务器连不上时最多等 2.6 秒，随后用本地缓存登录，不破坏离线。
+  function queueLoginForSync(text, message) {
+    if (!bridge || !syncHandler() || window.__manorPeerMode) return false;
+    const id = String((message && message.id) || '').trim();
+    if (!id) return false;
+    try {
+      const profileText = bridge.ensure_profile(id);
+      if (!profileText || profileText === '{}') return false;
+    } catch (err) {
+      return false;
+    }
+    pendingLoginText = text;
+    syncAndWait(2600).then(() => {
+      if (pendingLoginText !== text) return;
+      pendingLoginText = null;
+      try {
+        bridge.handle(text);
+      } catch (err) {
+        if (activeSocket && activeSocket.onerror) activeSocket.onerror({ type: 'error', error: err });
+      }
+    });
+    return true;
   }
 
   function setupOta() {
@@ -602,6 +697,7 @@
 
   function installSender() {
     window.__manorSend = (text) => {
+      maybeSyncAfterState(text);
       if (activeSocket && activeSocket.readyState === 1 && activeSocket.onmessage) {
         try { activeSocket.onmessage({ data: text }); } catch (err) { console.error(err); }
       }
@@ -662,6 +758,19 @@ local_bridge.init('/data')
 `);
     bridge = pyodide.globals.get('local_bridge');
     setStage('bridge.ready');
+    try {
+      const aiStatus = bridge.ai_status ? JSON.parse(bridge.ai_status()) : null;
+      if (aiStatus) {
+        diagPost({
+          action: 'log',
+          level: aiStatus.available ? 'info' : 'error',
+          event: 'ai.status',
+          detail: aiStatus,
+        });
+      }
+    } catch (err) {
+      trace('ai.status.failed', { message: String(err && err.message || err) });
+    }
 
     installSender();
     installWebSocketShim();
@@ -671,7 +780,13 @@ local_bridge.init('/data')
     await loadScript(APP_JS);
     setupNearby();
     setupOta();
-    scheduleAutoSync(4000);
+    scheduleAutoSync(1500);
+    setInterval(() => {
+      if (document.visibilityState === 'visible') syncNow(true);
+    }, 180000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') syncNow(true);
+    });
     hideSplash();
     setStage('app.ready');
     diagPost({ action: 'ready', webVersion: VERSION });

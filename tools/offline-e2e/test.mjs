@@ -16,6 +16,10 @@ async function newPage(browser, label) {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#local-splash', { state: 'detached', timeout: 90000 });
   await page.waitForTimeout(600);
+  const info = await page.evaluate(async () => await (await fetch('/api/info')).json());
+  if (!info || !info.ai || info.ai.available !== true) {
+    throw new Error(`${label} 端侧 AI 未加载: ${JSON.stringify(info && info.ai)}`);
+  }
   return { context, page };
 }
 
