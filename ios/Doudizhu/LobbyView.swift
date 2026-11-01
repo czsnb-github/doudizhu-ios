@@ -324,31 +324,35 @@ struct LobbyView: View {
 
 private struct ManorBackground: View {
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.64, green: 0.82, blue: 0.88),
-                    ManorTheme.cream,
-                    Color(red: 0.95, green: 0.91, blue: 0.80)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+        GeometryReader { geo in
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.64, green: 0.82, blue: 0.88),
+                        ManorTheme.cream,
+                        Color(red: 0.95, green: 0.91, blue: 0.80)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
 
-            Circle()
-                .fill(ManorTheme.leaf.opacity(0.14))
-                .frame(width: 460, height: 460)
-                .offset(x: -270, y: -320)
+                Circle()
+                    .fill(ManorTheme.leaf.opacity(0.14))
+                    .frame(width: 460, height: 460)
+                    .offset(x: -geo.size.width * 0.25, y: -geo.size.height * 0.28)
 
-            Circle()
-                .fill(ManorTheme.gold.opacity(0.12))
-                .frame(width: 360, height: 360)
-                .offset(x: 310, y: 300)
+                Circle()
+                    .fill(ManorTheme.gold.opacity(0.12))
+                    .frame(width: 360, height: 360)
+                    .offset(x: geo.size.width * 0.30, y: geo.size.height * 0.28)
 
-            Circle()
-                .fill(Color.white.opacity(0.18))
-                .frame(width: 220, height: 220)
-                .offset(x: 250, y: -300)
+                Circle()
+                    .fill(Color.white.opacity(0.18))
+                    .frame(width: 220, height: 220)
+                    .offset(x: geo.size.width * 0.25, y: -geo.size.height * 0.30)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
         .ignoresSafeArea()
     }

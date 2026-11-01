@@ -2,6 +2,11 @@ name: iOS unsigned build
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: "跳过单测，仅做 UI 截图与 IPA（UI 迭代用）"
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -37,6 +42,7 @@ jobs:
           echo "使用模拟器 ${UDID} (${RUNTIME})"
 
       - name: Unit tests (simulator)
+        if: ${{ !inputs.skip_tests }}
         working-directory: ios
         run: |
           set -euo pipefail
@@ -48,15 +54,31 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
+      - name: Build for simulator (screenshot only)
+        if: ${{ inputs.skip_tests }}
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Doudizhu.xcodeproj \
+            -scheme Doudizhu \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=$SIM_UDID" \
+            -derivedDataPath simbuild \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
       - name: Launch app in simulator and screenshot
         working-directory: ios
         run: |
           set -euo pipefail
           xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
-          xcrun simctl bootstatus "$SIM_UDID" -b
+          sleep 5
           xcrun simctl install "$SIM_UDID" simbuild/Build/Products/Debug-iphonesimulator/Doudizhu.app
           xcrun simctl launch "$SIM_UDID" com.molemanor.doudizhu
-          sleep 3
+          sleep 5
           xcrun simctl io "$SIM_UDID" screenshot simulator-lobby.png
           ls -lh simulator-lobby.png
 
