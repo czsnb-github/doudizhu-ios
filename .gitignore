@@ -19,4 +19,6 @@ ios/build/
 ios/artifacts/
 ios/*.xcodeproj/
 ios/DerivedData/
+ios/simbuild/
+ios/simulator-lobby.png
 .DS_Store

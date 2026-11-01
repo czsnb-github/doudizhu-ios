@@ -14,13 +14,15 @@ final class TableHost {
     var onUpdate: ((Status) -> Void)?
 
     private let hostName: String
+    private let advertise: Bool
     private var listener: NWListener?
     private var peers: [UUID: LinePeer] = [:]
     private var peerNames: [UUID: String] = [:]
     private var status = Status()
 
-    init(hostName: String) {
+    init(hostName: String, advertise: Bool = true) {
         self.hostName = hostName
+        self.advertise = advertise
     }
 
     func start() {
@@ -29,10 +31,12 @@ final class TableHost {
             let parameters = NWParameters.tcp
             parameters.includePeerToPeer = true
             let listener = try NWListener(using: parameters)
-            listener.service = NWListener.Service(
-                name: "\(hostName)的牌桌",
-                type: "_doudizhu._tcp"
-            )
+            if advertise {
+                listener.service = NWListener.Service(
+                    name: "\(hostName)的牌桌",
+                    type: "_doudizhu._tcp"
+                )
+            }
             listener.stateUpdateHandler = { [weak self] state in
                 DispatchQueue.main.async {
                     self?.handleListenerState(state)
