@@ -41,6 +41,7 @@ DEFAULT_OUT = ROOT / "static" / "ota" / "ios"
 NATIVE_OWNED = {"static/boot.js"}
 RUNTIME_PREFIXES = ("pyodide/", "packages/")
 REQUIRED = {"index.html", "app-core.zip"}
+TEXT_SUFFIXES = {".html", ".htm", ".css", ".js", ".mjs", ".json", ".svg", ".txt"}
 
 
 def sha256_file(path: Path) -> str:
@@ -61,6 +62,18 @@ def iter_bundle(www: Path):
         if "__pycache__" in path.parts or rel.startswith("."):
             continue
         yield rel, path
+
+
+def normalize_bytes(path: Path) -> bytes:
+    """仓库文本按 LF 存储；Windows 工作区是 CRLF，发布时统一回 LF。
+
+    iOS 安装包由 macOS CI 用 LF 文件构建；如果 OTA 用 CRLF 计算哈希，未变化的
+    文件也会被判成新文件。这里归一化后，清单和安装包逐字节一致。
+    """
+    data = path.read_bytes()
+    if path.suffix.lower() in TEXT_SUFFIXES:
+        data = data.replace(b"\r\n", b"\n")
+    return data
 
 
 def safe_rel(rel: str) -> str:
@@ -90,14 +103,13 @@ def build_manifest(www: Path, out: Path, *, min_shell: str) -> dict:
     seen = set()
     for rel, path in iter_bundle(www):
         rel = safe_rel(rel)
-        digest = sha256_file(path)
-        size = path.stat().st_size
+        data = normalize_bytes(path)
+        digest = hashlib.sha256(data).hexdigest()
+        size = len(data)
         target = files_dir / digest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists():
-            shutil.copy2(path, target)
-        elif target.stat().st_size != size:
-            raise SystemExit(f"内容寻址文件大小不一致: {target}")
+        if not target.exists() or target.read_bytes() != data:
+            target.write_bytes(data)
         rows.append(
             {
                 "path": rel,
@@ -188,10 +200,7 @@ def main() -> None:
     print(f"OTA {manifest['version']} -> {out}")
     print(f"  minShell={manifest['minShell']} files={len(manifest['files'])} total={manifest['totalSize']} bytes")
     print(f"  manifest: {out / 'manifest.json'}")
-    if len(manifest["files"]) > 8:
-        preview = manifest["files"][:3]
-    else:
-        preview = manifest["files"]
+    preview = manifest["files"][:3] if len(manifest["files"]) > 8 else manifest["files"]
     for row in preview:
         print(f"  {row['path']} {row['size']} {row['sha256'][:12]}…")
 

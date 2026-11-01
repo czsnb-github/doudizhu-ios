@@ -7,10 +7,6 @@ from pathlib import Path
 from tools.build_ota import build_manifest, verify_manifest
 
 
-def sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 class TestOtaBuild(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -50,7 +46,6 @@ class TestOtaBuild(unittest.TestCase):
         self.assertIn("models.zip", paths)
         self.assertIn("web-version.json", paths)
         for row in manifest["files"]:
-            self.assertEqual(row["sha256"], sha(self.www / row["path"]))
             self.assertTrue((self.out / row["url"]).is_file())
         verify_manifest(self.out, manifest)
 
@@ -68,6 +63,14 @@ class TestOtaBuild(unittest.TestCase):
         self.assertNotEqual(app_rows[0]["sha256"], old_app["sha256"])
         self.assertTrue((self.out / old_app["url"]).is_file())
         verify_manifest(self.out, second)
+
+    def test_text_is_published_with_lf_line_endings(self):
+        (self.www / "static" / "crlf.js").write_bytes(b"one\r\ntwo\r\n")
+        manifest = build_manifest(self.www, self.out, min_shell="0.5.0")
+        row = next(item for item in manifest["files"] if item["path"] == "static/crlf.js")
+        self.assertEqual(row["sha256"], hashlib.sha256(b"one\ntwo\n").hexdigest())
+        self.assertEqual((self.out / row["url"]).read_bytes(), b"one\ntwo\n")
+        verify_manifest(self.out, manifest)
 
     def test_tampered_file_is_rejected(self):
         manifest = build_manifest(self.www, self.out, min_shell="0.5.0")
