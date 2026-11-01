@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261109a';
+  const VERSION = '20261110a';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;

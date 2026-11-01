@@ -106,6 +106,11 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const host = await newPage(browser, 'host');
   const guest = await newPage(browser, 'guest');
+  const aiTest = await host.page.evaluate(async () => await (await fetch('/api/ai/selftest')).json());
+  if (!aiTest || aiTest.ok !== true || aiTest.engine !== 'NumpyDouZeroAI' || aiTest.action_len < 1) {
+    throw new Error(`端侧 DouZero 推理失败: ${JSON.stringify(aiTest)}`);
+  }
+  console.log(`AI selftest ok action_len=${aiTest.action_len}`);
   const stopRelay = await startRelay(host.page, guest.page);
 
   try {
