@@ -1,5 +1,8 @@
 name: iOS unsigned build
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
     inputs:
@@ -78,8 +81,9 @@ jobs:
           sleep 5
           xcrun simctl install "$SIM_UDID" simbuild/Build/Products/Debug-iphonesimulator/Doudizhu.app
           xcrun simctl launch "$SIM_UDID" com.molemanor.doudizhu
-          sleep 15
+          sleep 30
           xcrun simctl io "$SIM_UDID" screenshot simulator-lobby.png
+          xcrun simctl spawn "$SIM_UDID" log show --last 2m --style compact --predicate 'process == "Doudizhu"' | tail -120 || true
           ls -lh simulator-lobby.png
 
       - name: Upload simulator screenshot
@@ -121,3 +125,14 @@ jobs:
           name: Doudizhu-unsigned-ipa
           path: ios/artifacts/Doudizhu-unsigned.ipa
           if-no-files-found: error
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-latest
+          name: iOS 最新构建
+          body: "本机离线版未签名 IPA；下载后用签名工具安装。每次构建自动更新。"
+          prerelease: true
+          files: |
+            ios/artifacts/Doudizhu-unsigned.ipa
+            ios/simulator-lobby.png

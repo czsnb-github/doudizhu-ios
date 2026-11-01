@@ -27,9 +27,10 @@ final class LocalWebServer {
             let parameters = NWParameters.tcp
             parameters.allowLocalEndpointReuse = true
             let listener = try NWListener(using: parameters, on: nwPort)
-            listener.stateUpdateHandler = { state in
+            listener.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
+                    print("MANOR local server ready root=\(self?.root.path ?? "")")
                     DispatchQueue.main.async { onReady() }
                 case .failed(let error):
                     DispatchQueue.main.async { onError(error.localizedDescription) }
