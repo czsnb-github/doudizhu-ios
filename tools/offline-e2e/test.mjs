@@ -135,8 +135,14 @@ async function main() {
     console.log('step: wait bidding');
 
     await Promise.all([
-      host.page.waitForSelector('#bidding:not(.hidden) [data-call="1"], #actions:not(.hidden)', { timeout: 30000 }),
-      guest.page.waitForSelector('#bidding:not(.hidden) [data-call="1"], #actions:not(.hidden)', { timeout: 30000 }),
+      host.page.waitForFunction(() => {
+        const round = document.querySelector('#round-pill')?.textContent || '';
+        return round.includes('第 1 局') && document.querySelectorAll('#hand .card').length >= 17;
+      }, { timeout: 30000 }),
+      guest.page.waitForFunction(() => {
+        const round = document.querySelector('#round-pill')?.textContent || '';
+        return round.includes('第 1 局') && document.querySelectorAll('#hand .card').length >= 17;
+      }, { timeout: 30000 }),
     ]);
 
     const hostCards = await host.page.locator('#hand .card').count();
