@@ -84,7 +84,7 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
         ready = true
         currentStage = "ready"
         record("boot.ready", detail: ["version": appVersion, "webVersion": OtaStore().bundledVersion()])
-        notify(.bootReady, message: nil)
+        notify(Self.bootReady, message: nil)
         upload(reason: "boot.ready")
     }
 
@@ -93,7 +93,7 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
         merged["message"] = message
         merged["stage"] = currentStage
         record("boot.error", level: "error", detail: merged)
-        notify(.bootFailure, message: message)
+        notify(Self.bootFailure, message: message)
         upload(reason: "bootError")
     }
 
