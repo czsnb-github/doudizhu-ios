@@ -85,10 +85,10 @@ final class OtaStore {
         guard let markerData = try? Data(contentsOf: marker),
               let complete = try? JSONDecoder().decode(OtaComplete.self, from: markerData),
               complete.version == version else { return nil }
-        for required in ["index.html", "app-core.zip", "web-version.json"] {
-            guard fm.fileExists(atPath: root.appendingPathComponent(required).path) else {
-                return nil
-            }
+        // 未变化的文件不复制到覆盖层，由 LocalWebServer 回落到安装包；
+        // 版本标记必须存在，证明这次安装完整走完。
+        guard fm.fileExists(atPath: root.appendingPathComponent("web-version.json").path) else {
+            return nil
         }
         return root
     }

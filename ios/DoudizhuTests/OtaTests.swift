@@ -94,6 +94,27 @@ final class OtaTests: XCTestCase {
         let active = try XCTUnwrap(store.activeRoot())
         XCTAssertTrue(FileManager.default.fileExists(atPath: active.appendingPathComponent("index.html").path))
 
+        // 未变化的文件可以只留在安装包里；覆盖层只需要版本标记和变更文件。
+        let partial = try store.makeStaging()
+        try write("{\"version\":\"20261102e\"}", to: "web-version.json", under: partial)
+        try write("engine-newer", to: "app-core.zip", under: partial)
+        let partialManifest = makeManifest(
+            version: "20261102e",
+            files: ["index.html", "app-core.zip", "web-version.json"]
+        )
+        try store.install(staging: partial, manifest: partialManifest)
+        let partialRoot = try XCTUnwrap(store.activeRoot())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partialRoot.appendingPathComponent("index.html").path))
+        let server = LocalWebServer(bundleRoot: bundleRoot, overlayRoot: partialRoot)
+        XCTAssertEqual(
+            server.resolve(relative: "index.html")?.deletingLastPathComponent().path ?? "",
+            bundleRoot.standardizedFileURL.path
+        )
+        XCTAssertEqual(
+            server.resolve(relative: "app-core.zip")?.deletingLastPathComponent().path ?? "",
+            partialRoot.standardizedFileURL.path
+        )
+
         // 重装一个更新的安装包后，应该优先使用安装包，而不是旧 OTA。
         let newerBundle = try bundle(version: "20261105a")
         let sameBase = OtaStore(bundleRoot: newerBundle, baseDir: base)
