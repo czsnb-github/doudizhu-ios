@@ -1,8 +1,6 @@
 name: iOS unsigned build
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
