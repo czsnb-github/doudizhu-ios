@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   e2e:
@@ -54,3 +54,15 @@ jobs:
             tools/offline-e2e/e2e.log
             tools/offline-e2e/shots/offline-e2e-*.png
           if-no-files-found: warn
+
+      - name: Publish E2E debug release
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: e2e-debug
+          name: E2E debug
+          body: "离线双客户端 E2E 失败日志与截图（自动更新）"
+          prerelease: true
+          files: |
+            tools/offline-e2e/e2e.log
+            tools/offline-e2e/shots/offline-e2e-*.png
