@@ -21,6 +21,7 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
     private var currentStage = "native"
     private var warnCount = 0
     private var uploading = false
+    private var pendingUpload = false
     private var ready = false
     private let maxEvents = 240
 
@@ -165,7 +166,10 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
 
     func upload(reason: String) {
         queue.async {
-            guard !self.uploading else { return }
+            guard !self.uploading else {
+                self.pendingUpload = true
+                return
+            }
             self.uploading = true
             let payload = self.payloadLocked(reason: reason)
             guard JSONSerialization.isValidJSONObject(payload),
@@ -186,8 +190,17 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
                     self.uploading = false
                     if let http = response as? HTTPURLResponse, http.statusCode == 200 {
                         print("MANOR diag uploaded id=\(String(data: data ?? Data(), encoding: .utf8) ?? "")")
+                        self.events.removeAll(keepingCapacity: true)
+                        self.persistLocked()
                     } else if let error {
                         print("MANOR diag upload failed: \(error.localizedDescription)")
+                    }
+                    if self.pendingUpload {
+                        self.pendingUpload = false
+                        let delay = DispatchTime.now() + 1.0
+                        DispatchQueue.main.asyncAfter(deadline: delay) {
+                            self.upload(reason: "retry")
+                        }
                     }
                 }
             }.resume()

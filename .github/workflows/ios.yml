@@ -142,6 +142,18 @@ jobs:
             ios/release-build.log
           if-no-files-found: warn
 
+      - name: Publish failure logs
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-debug
+          name: iOS build debug
+          body: "iOS 构建失败日志（自动更新）"
+          prerelease: true
+          files: |
+            ios/unit-tests.log
+            ios/release-build.log
+
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
