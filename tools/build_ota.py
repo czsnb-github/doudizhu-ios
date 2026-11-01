@@ -1,8 +1,9 @@
 """Publish the shared web/engine/AI bundle for on-device OTA updates.
 
-The iOS shell owns only the native runtime (Pyodide, NumPy wheel, boot.js).
+The iOS shell owns only the native code (MCS, OTA/sync bridges, permissions).
 Everything a release can change lives in this bundle: index.html, static UI,
-app-core.zip (Python engine + local bridge) and models.zip (DouZero weights).
+static/boot.js, Pyodide/NumPy runtime, app-core.zip (Python engine + bridge)
+and models.zip (DouZero weights).
 
 Layout under `static/ota/ios`:
   manifest.json                  tiny pointer read by the app
@@ -36,11 +37,9 @@ if str(ROOT) not in sys.path:
 DEFAULT_WWW = ROOT / "client" / "www"
 DEFAULT_OUT = ROOT / "static" / "ota" / "ios"
 
-# Native shell files are never allowed to ride an OTA update: a new boot.js
-# requires a new install, otherwise an OTA could silently break the bridge.
-NATIVE_OWNED = {"static/boot.js"}
-RUNTIME_PREFIXES = ("pyodide/", "packages/")
-REQUIRED = {"index.html", "app-core.zip"}
+# 0.5.1 起，启动层和 Pyodide/NumPy 运行时也走 OTA；原生壳仍只能重装。
+# 保持安装包里的完整副本作为回落，清单里缺的文件由 LocalWebServer 回落到 bundle。
+REQUIRED = {"index.html", "app-core.zip", "static/boot.js"}
 TEXT_SUFFIXES = {".html", ".htm", ".css", ".js", ".mjs", ".json", ".svg", ".txt"}
 
 
@@ -57,8 +56,6 @@ def iter_bundle(www: Path):
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(www).as_posix()
-        if rel.startswith(RUNTIME_PREFIXES) or rel in NATIVE_OWNED:
-            continue
         if "__pycache__" in path.parts or rel.startswith("."):
             continue
         yield rel, path

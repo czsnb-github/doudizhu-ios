@@ -32,15 +32,15 @@ class TestOtaBuild(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_manifest_excludes_native_runtime_and_verifies(self):
+    def test_manifest_includes_boot_and_runtime(self):
         manifest = build_manifest(self.www, self.out, min_shell="0.5.0")
         self.assertEqual(manifest["schema"], 1)
         self.assertEqual(manifest["version"], "20261102d")
         self.assertEqual(manifest["minShell"], "0.5.0")
         paths = {row["path"] for row in manifest["files"]}
-        self.assertNotIn("static/boot.js", paths)
-        self.assertNotIn("pyodide/pyodide.js", paths)
-        self.assertNotIn("packages/numpy.whl", paths)
+        self.assertIn("static/boot.js", paths)
+        self.assertIn("pyodide/pyodide.js", paths)
+        self.assertIn("packages/numpy.whl", paths)
         self.assertIn("index.html", paths)
         self.assertIn("app-core.zip", paths)
         self.assertIn("models.zip", paths)
