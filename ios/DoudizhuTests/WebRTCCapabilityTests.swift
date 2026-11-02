@@ -40,7 +40,9 @@ final class WebRTCCapabilityTests: XCTestCase, WKScriptMessageHandler {
             self.window = window
             webView.loadHTMLString(Self.html, baseURL: URL(string: "http://127.0.0.1:8765/"))
         }
-        wait(for: [expectation], timeout: 25)
+        // CI 的模拟器冷启动 WebKit 内容进程可能要十几秒，25 秒会在页面脚本
+        // 还没跑完时就判超时；页面内的 WebRTC 自检本身仍有 15 秒超时。
+        wait(for: [expectation], timeout: 60)
         XCTAssertEqual(result?["ok"] as? Bool, true, "WKWebView WebRTC 失败: \(String(describing: result))")
         XCTAssertEqual(result?["message"] as? String, "ping")
     }
