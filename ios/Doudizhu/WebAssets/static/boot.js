@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1793633865';
+  const VERSION = '1793635520';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -25,12 +25,26 @@
     { urls: 'stun:stun.chat.bilibili.com:3478' },
     { urls: 'stun:stun.cloudflare.com:3478' },
   ];
+  // 自动配对只用公共 MQTT 交换一次 WebRTC 连接信息（加密、限时、连上即清理），
+  // 牌桌、AI 和出牌数据始终走两台设备之间的 P2P DataChannel。
+  const REMOTE_SIGNAL = {
+    version: 1,
+    secret: 'e893240f7b60a4eaaee4d692393da75d71b356cd10a0de63',
+    room: 'e6276e5e25d2c36efe8c542c',
+    brokers: [
+      'wss://broker.emqx.io:8084/mqtt',
+      'wss://broker.hivemq.com:8884/mqtt',
+      'wss://mqtt.eclipseprojects.io:443/mqtt',
+      'wss://test.mosquitto.org:8081/mqtt',
+    ],
+  };
   let remoteSession = null;
   let remoteProfileId = '';
   let remoteUi = null;
   let remoteModal = null;
   let remoteLastStatus = '';
   let remoteLastError = false;
+  let remoteMqttLoader = null;
 
   function diagHandler() {
     return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.manorDiag;
@@ -195,14 +209,23 @@
   }
 
   function installWebSocketShim() {
+    const RealWebSocket = window.WebSocket;
     class LocalWebSocket {
       static CONNECTING = 0;
       static OPEN = 1;
       static CLOSING = 2;
       static CLOSED = 3;
 
-      constructor(url) {
-        this.url = String(url || '');
+      constructor(url, protocols) {
+        const text = String(url || '');
+        // 只有本机桥接走 shim；公共信令（MQTT over WSS）必须用真实 WebSocket。
+        if (/^wss?:\/\//i.test(text)
+            && !/^wss?:\/\/(127\.0\.0\.1|localhost)(?::|\/|$)/i.test(text)) {
+          return protocols === undefined
+            ? new RealWebSocket(text)
+            : new RealWebSocket(text, protocols);
+        }
+        this.url = text;
         this.readyState = LocalWebSocket.CONNECTING;
         this.binaryType = 'blob';
         this.onopen = null;
@@ -760,15 +783,27 @@
     return REMOTE_USERS.has(String(raw || '').trim());
   }
 
+  function remoteOtherName() {
+    if (remoteProfileId === '喵喵') return '猫猫';
+    if (remoteProfileId === '猫猫') return '喵喵';
+    return '对方';
+  }
+
   function remoteDefaultStatus() {
     if (remoteSession && remoteSession.connected) {
       return remoteSession.role === 'host'
         ? '已连接家人；AI 在这台 iPad 上推理'
         : `已连上 ${remoteSession.hostName || '房主'}；AI 在房主 iPad 上推理`;
     }
+    if (remoteSession && remoteSession.role === 'host' && remoteSession.auto) {
+      return `房间已开，等 ${remoteOtherName()} 点“自动加入”…`;
+    }
+    if (remoteSession && remoteSession.role === 'guest' && remoteSession.auto) {
+      return `正在等 ${remoteOtherName()} 开房…`;
+    }
     if (remoteSession && remoteSession.role === 'host' && remoteSession.offerCode) return '房间已开，等待对方应答';
     if (remoteSession && remoteSession.role === 'guest' && remoteSession.answerCode) return '应答码已生成，等待房主连接';
-    return 'WebRTC 直连 · 仅猫猫/喵喵 · 不需要服务器';
+    return '自动配对 · 仅猫猫/喵喵 · 牌局点对点直连';
   }
 
   function remoteSetStatus(text, isError) {
@@ -803,6 +838,10 @@
       if (reset) reset.classList.toggle('hidden', !remoteSession);
       const hostConnect = remoteModal.querySelector('[data-remote-host-connect]');
       if (hostConnect) hostConnect.disabled = !(hostSession && remoteSession.offerCode);
+      const autoHost = remoteModal.querySelector('[data-remote-auto-host]');
+      const autoJoin = remoteModal.querySelector('[data-remote-auto-join]');
+      if (autoHost) autoHost.disabled = !!remoteSession;
+      if (autoJoin) autoJoin.disabled = !!remoteSession;
     }
   }
 
@@ -823,6 +862,10 @@
       '.remote-panel{width:min(560px,100%);max-height:90vh;overflow:auto;background:#fffaf0;border:2px solid rgba(79,125,87,.35);border-radius:22px;box-shadow:0 18px 60px rgba(25,35,25,.28);padding:18px;color:#3b3026}',
       '.remote-title{display:flex;align-items:center;gap:10px}.remote-title b{font-size:20px;flex:1}.remote-close{width:34px;height:34px;border-radius:50%;border:1px solid rgba(110,83,59,.2);background:#f4ead7;font-size:20px;line-height:1;color:#6b5a46}',
       '.remote-sub{font-size:12px;color:#7d6a55;margin:4px 0 12px}',
+      '.remote-auto{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:14px;background:rgba(220,235,212,.45);border:1.5px dashed rgba(79,125,87,.3);margin-bottom:12px}',
+      '.remote-auto p{margin:0;font-size:12.5px;line-height:1.6;color:#5b6b50}',
+      '.remote-divider{display:flex;align-items:center;gap:8px;margin:12px 0 10px;color:#9a8a74;font-size:11px}',
+      '.remote-divider:before,.remote-divider:after{content:"";flex:1;height:1px;background:rgba(110,83,59,.18)}',
       '.remote-tabs{display:flex;gap:8px;margin-bottom:12px}.remote-tab{flex:1;padding:8px 10px;border-radius:12px;border:1.5px solid rgba(79,125,87,.25);background:#f6f0e1;color:#5d6f52;font-size:13px;font-weight:800}.remote-tab.active{background:#4f7d57;color:#fff;border-color:#4f7d57}',
       '.remote-panel-body{display:flex;flex-direction:column;gap:9px}.remote-panel-body p{font-size:12.5px;line-height:1.6;color:#6b5a46;margin:0 0 2px}',
       '.remote-label{font-size:12px;font-weight:800;color:#5d6f52;margin-top:2px}',
@@ -846,7 +889,7 @@
     card.style.display = 'none';
     card.innerHTML = [
       '<div class="remote-head"><b>远程互动</b><small>WebRTC 直连 · 仅猫猫/喵喵</small></div>',
-      '<div class="remote-status" id="remote-card-status">WebRTC 直连 · 仅猫猫/喵喵 · 不需要服务器</div>',
+      '<div class="remote-status" id="remote-card-status">自动配对 · 仅猫猫/喵喵 · 牌局点对点直连</div>',
       '<div class="remote-actions"><button type="button" class="remote-btn primary" data-remote-open>远程互动</button></div>',
     ].join('');
     const anchor = document.getElementById('ota-card') || document.getElementById('nearby-card') || hero.querySelector('.ios-card');
@@ -881,9 +924,14 @@
       '<div class="remote-panel">',
       '  <div class="remote-title"><b>远程互动</b><button type="button" class="remote-close" data-remote-close aria-label="关闭">×</button></div>',
       '  <div class="remote-sub">WebRTC 点对点直连 · 仅猫猫/喵喵 · 牌桌和 AI 在开桌设备上</div>',
+      '  <div class="remote-auto">',
+      '    <p>两台设备都打开这里：一台点“自动开房”，另一台点“自动加入”。不用发邀请码；公共信令只交换连接信息，连上就断开。</p>',
+      '    <div class="remote-actions"><button type="button" class="remote-btn primary" data-remote-auto-host>自动开房</button><button type="button" class="remote-btn" data-remote-auto-join>自动加入</button></div>',
+      '  </div>',
+      '  <div class="remote-divider"><span>或手动邀请码</span></div>',
       '  <div class="remote-tabs"><button type="button" class="remote-tab" data-remote-tab="host">我要开房</button><button type="button" class="remote-tab" data-remote-tab="guest">我要加入</button></div>',
       '  <div class="remote-panel-body" data-remote-panel="host">',
-      '    <p>开一间房，把邀请码发给对方；对方回应答码后，粘贴到这里连接。</p>',
+      '    <p>自动配对不方便时，用邀请码开房：把邀请码发给对方；对方回应答码后，粘贴到这里连接。</p>',
       '    <button type="button" class="remote-btn primary" data-remote-host-start>开一间房</button>',
       '    <div class="hidden" data-remote-offer-box>',
       '      <div class="remote-label">邀请码（发给对方）</div>',
@@ -913,6 +961,8 @@
     remoteModal = mask;
     mask.querySelector('[data-remote-close]').addEventListener('click', () => { mask.style.display = 'none'; });
     mask.querySelectorAll('[data-remote-tab]').forEach((btn) => btn.addEventListener('click', () => remoteSetTab(btn.getAttribute('data-remote-tab'))));
+    mask.querySelector('[data-remote-auto-host]').addEventListener('click', () => remoteAutoHost());
+    mask.querySelector('[data-remote-auto-join]').addEventListener('click', () => remoteAutoJoin());
     mask.querySelector('[data-remote-host-start]').addEventListener('click', () => remoteHostStart());
     mask.querySelector('[data-remote-host-connect]').addEventListener('click', () => remoteHostConnect());
     mask.querySelector('[data-remote-guest-answer]').addEventListener('click', () => remoteGuestAnswer());
@@ -971,6 +1021,407 @@
       remoteCopy(selector);
     }
   }
+
+  // ------------------------------------------------ 自动配对（公共 MQTT 只换 SDP）
+  // 固定两账号、固定房间；SDP/ICE 用 AES-GCM 加密，连接建立后立刻清掉 retained
+  // offer 并断开 MQTT。出牌、牌桌状态和 AI 仍然只在 WebRTC DataChannel 里走。
+
+  function remoteSignalConfig() {
+    const override = window.__MANOR_SIGNAL_BASE;
+    if (override && typeof override === 'object') {
+      return {
+        secret: String(override.secret || REMOTE_SIGNAL.secret),
+        room: String(override.room || REMOTE_SIGNAL.room),
+        brokers: Array.isArray(override.brokers) && override.brokers.length
+          ? override.brokers.map(String)
+          : REMOTE_SIGNAL.brokers,
+      };
+    }
+    return {
+      secret: REMOTE_SIGNAL.secret,
+      room: REMOTE_SIGNAL.room,
+      brokers: REMOTE_SIGNAL.brokers,
+    };
+  }
+
+  function remoteSignalTopic(config, leaf) {
+    return `manor/ddz/v${REMOTE_SIGNAL.version}/${config.room}/${leaf}`;
+  }
+
+  function remoteSignalBytes(text) {
+    return new TextEncoder().encode(String(text));
+  }
+
+  function remoteB64(bytes) {
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < view.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, view.subarray(i, i + chunk));
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function remoteUnb64(text) {
+    let raw = String(text || '').replace(/-/g, '+').replace(/_/g, '/');
+    if (!raw) throw new Error('信令内容为空');
+    while (raw.length % 4) raw += '=';
+    const binary = atob(raw);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+    return out;
+  }
+
+  async function remoteSignalKey(config) {
+    if (!window.crypto || !crypto.subtle) {
+      throw new Error('这台设备不支持加密信令，请用手动邀请码');
+    }
+    const digest = await crypto.subtle.digest('SHA-256', remoteSignalBytes(config.secret));
+    return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+
+  async function remoteSignalSeal(key, payload) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      remoteSignalBytes(JSON.stringify(payload)),
+    );
+    return JSON.stringify({ v: 1, iv: remoteB64(iv), d: remoteB64(new Uint8Array(data)) });
+  }
+
+  async function remoteSignalOpen(key, raw) {
+    const env = JSON.parse(String(raw || '{}'));
+    if (!env || env.v !== 1 || !env.iv || !env.d) throw new Error('信令格式不对');
+    const data = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: remoteUnb64(env.iv) },
+      key,
+      remoteUnb64(env.d),
+    );
+    return JSON.parse(new TextDecoder().decode(new Uint8Array(data)));
+  }
+
+  function remoteRandomId() {
+    try {
+      const bytes = crypto.getRandomValues(new Uint8Array(8));
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    } catch (err) {
+      return Math.random().toString(16).slice(2, 18);
+    }
+  }
+
+  function remoteLoadMqtt() {
+    if (window.mqtt && typeof window.mqtt.connect === 'function') {
+      return Promise.resolve(window.mqtt);
+    }
+    if (remoteMqttLoader) return remoteMqttLoader;
+    remoteMqttLoader = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = `/static/mqtt.min.js?v=${encodeURIComponent(VERSION)}`;
+      script.onload = () => {
+        if (window.mqtt && typeof window.mqtt.connect === 'function') resolve(window.mqtt);
+        else reject(new Error('公共信令库没有初始化'));
+      };
+      script.onerror = () => reject(new Error('公共信令库加载失败'));
+      document.head.appendChild(script);
+    }).catch((err) => {
+      remoteMqttLoader = null;
+      throw err;
+    });
+    return remoteMqttLoader;
+  }
+
+  async function remoteSignalClients(config, role) {
+    const mqtt = await remoteLoadMqtt();
+    const attempts = config.brokers.map((url) => new Promise((resolve) => {
+      let settled = false;
+      let client = null;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        if (!ok && client) {
+          try { client.end(true); } catch (err) { /* ignore */ }
+        }
+        resolve(ok ? client : null);
+      };
+      try {
+        client = mqtt.connect(url, {
+          clientId: 'manor-' + String(role || 'r').charAt(0) + remoteRandomId().slice(0, 10),
+          clean: true,
+          connectTimeout: 8000,
+          reconnectPeriod: 0,
+          keepalive: 30,
+          protocolVersion: 4,
+        });
+      } catch (err) {
+        finish(false);
+        return;
+      }
+      const timer = setTimeout(() => finish(false), 9000);
+      client.on('connect', () => {
+        clearTimeout(timer);
+        finish(true);
+      });
+      client.on('error', () => {
+        clearTimeout(timer);
+        console.warn('remote.signal.broker.failed', url);
+        finish(false);
+      });
+      client.on('close', () => {
+        clearTimeout(timer);
+        if (!settled) finish(false);
+      });
+    }));
+    const clients = (await Promise.all(attempts)).filter(Boolean);
+    if (!clients.length) throw new Error('公共信令连不上；请用手动邀请码');
+    return clients;
+  }
+
+  function remoteSignalClose(clients) {
+    (clients || []).forEach((client) => {
+      try { client.end(true); } catch (err) { /* ignore */ }
+    });
+  }
+
+  function remoteSignalEnd(session) {
+    if (!session || session.signalEnded) return;
+    session.signalEnded = true;
+    if (session.signalRepublish) { clearInterval(session.signalRepublish); session.signalRepublish = null; }
+    if (session.answerRepublish) { clearInterval(session.answerRepublish); session.answerRepublish = null; }
+    if (session.signalTimeout) { clearTimeout(session.signalTimeout); session.signalTimeout = null; }
+    if (session.signalHint) { clearTimeout(session.signalHint); session.signalHint = null; }
+    const clients = session.signalClients || [];
+    session.signalClients = null;
+    if (session.role === 'host' && session.signalTopics) {
+      clients.forEach((client) => {
+        try { client.publish(session.signalTopics.offer, '', { qos: 0, retain: true }); } catch (err) { /* ignore */ }
+      });
+    }
+    setTimeout(() => remoteSignalClose(clients), session.role === 'host' ? 600 : 0);
+  }
+
+  async function remotePublishOffer(session) {
+    if (remoteSession !== session || !session.signalKey || !session.signal || !session.signalClients) return;
+    try {
+      const payload = await remoteSignalSeal(
+        session.signalKey,
+        Object.assign({}, session.signal, { at: Date.now() }),
+      );
+      if (session.signalEnded) return;
+      (session.signalClients || []).forEach((client) => {
+        try { client.publish(session.signalTopics.offer, payload, { qos: 0, retain: true }); } catch (err) { /* ignore */ }
+      });
+    } catch (err) {
+      console.warn('offer publish failed', err);
+    }
+  }
+
+  async function remotePublishAnswer(session) {
+    if (remoteSession !== session || !session.signalKey || !session.answer || !session.signalClients) return;
+    try {
+      const payload = await remoteSignalSeal(
+        session.signalKey,
+        Object.assign({}, session.answer, { at: Date.now() }),
+      );
+      if (session.signalEnded) return;
+      (session.signalClients || []).forEach((client) => {
+        try { client.publish(session.signalTopics.answer, payload, { qos: 0, retain: false }); } catch (err) { /* ignore */ }
+      });
+    } catch (err) {
+      console.warn('answer publish failed', err);
+    }
+  }
+
+  async function remoteAutoHost() {
+    if (!remoteAllowed(remoteProfileId)) {
+      remoteSetStatus('远程互动只允许猫猫和喵喵', true);
+      return;
+    }
+    if (remoteSession) {
+      remoteSetStatus('已经在远程房间里；先重置连接，再重新开房', true);
+      return;
+    }
+    let session = null;
+    try {
+      const config = remoteSignalConfig();
+      const key = await remoteSignalKey(config);
+      session = remoteCreatePeer('host');
+      session.hostName = remoteProfileId;
+      session.auto = true;
+      session.signalKey = key;
+      const dc = session.pc.createDataChannel('manor', { ordered: true });
+      remoteBindChannel(session, dc);
+      remoteSetTab('host');
+      remoteSetStatus('正在准备房间并收集线路…');
+      await session.pc.setLocalDescription(await session.pc.createOffer());
+      await remoteGather(session.pc);
+      session.signal = {
+        v: 1,
+        role: 'host',
+        id: remoteRandomId(),
+        name: remoteProfileId,
+        at: Date.now(),
+        sdp: session.pc.localDescription,
+      };
+      session.signalTopics = {
+        offer: remoteSignalTopic(config, 'offer'),
+        answer: remoteSignalTopic(config, 'answer'),
+      };
+      remoteSetStatus('正在连公共信令（只交换连接信息）…');
+      const clients = await remoteSignalClients(config, 'host');
+      if (remoteSession !== session) { remoteSignalClose(clients); return; }
+      session.signalClients = clients;
+      clients.forEach((client) => {
+        client.on('message', (topic, payload) => {
+          if (String(topic) !== session.signalTopics.answer) return;
+          remoteHostSignalAnswer(session, String(payload || ''));
+        });
+        client.subscribe(session.signalTopics.answer, { qos: 0 });
+      });
+      await remotePublishOffer(session);
+      session.signalRepublish = setInterval(() => { remotePublishOffer(session); }, 4000);
+      session.signalTimeout = setTimeout(() => {
+        if (remoteSession !== session || session.connected) return;
+        remoteSetStatus(`等了 2 分半没等到 ${remoteOtherName()}；让对方点“自动加入”，或改用手动邀请码`, true);
+        remoteReset(true);
+      }, 150000);
+      session.signalHint = setTimeout(() => {
+        if (remoteSession !== session || session.connected || session.answerApplied) return;
+        remoteSetStatus(`还没配上：确认 ${remoteOtherName()} 点的是“自动加入”；也可以改用手动邀请码`);
+      }, 20000);
+      remoteSetStatus(`房间已开，等 ${remoteOtherName()} 点“自动加入”…`);
+    } catch (err) {
+      console.error('remote.auto.host.failed', err && err.message ? err.message : String(err));
+      if (session && remoteSession === session) remoteReset(true);
+      remoteSetStatus('自动开房失败：' + (err && err.message ? err.message : err), true);
+    }
+  }
+
+  async function remoteHostSignalAnswer(session, raw) {
+    if (remoteSession !== session || !session.signalKey || session.answerApplied) return;
+    let answer = null;
+    try {
+      answer = await remoteSignalOpen(session.signalKey, raw);
+    } catch (err) {
+      return;
+    }
+    if (!answer || answer.v !== 1 || answer.role !== 'answer' || !answer.sdp) return;
+    if (!session.signal || answer.to !== session.signal.id) return;
+    if (!remoteAllowed(answer.name)) return;
+    if (answer.name === session.hostName) return;
+    if (Date.now() - Number(answer.at || 0) > 150000) return;
+    if (session.pc.signalingState !== 'have-local-offer') return;
+    session.answerApplied = true;
+    session.guestName = String(answer.name);
+    try {
+      remoteSetStatus(`收到 ${session.guestName} 的应答，正在直连…`);
+      await session.pc.setRemoteDescription(answer.sdp);
+      if (session.signalRepublish) {
+        clearInterval(session.signalRepublish);
+        session.signalRepublish = null;
+      }
+    } catch (err) {
+      session.answerApplied = false;
+      console.warn('remote.answer.apply.failed', err && err.message ? err.message : String(err));
+      remoteSetStatus('应答没接上，正在等对方重发…', true);
+    }
+  }
+
+  async function remoteAutoJoin() {
+    if (!remoteAllowed(remoteProfileId)) {
+      remoteSetStatus('远程互动只允许猫猫和喵喵', true);
+      return;
+    }
+    if (remoteSession) {
+      remoteSetStatus('已经在远程房间里；先重置连接，再加入', true);
+      return;
+    }
+    let session = null;
+    try {
+      const config = remoteSignalConfig();
+      const key = await remoteSignalKey(config);
+      session = remoteCreatePeer('guest');
+      session.auto = true;
+      session.signalKey = key;
+      session.pc.ondatachannel = (event) => remoteBindChannel(session, event.channel);
+      remoteSetTab('guest');
+      remoteSetStatus('正在连公共信令（只交换连接信息）…');
+      const clients = await remoteSignalClients(config, 'guest');
+      if (remoteSession !== session) { remoteSignalClose(clients); return; }
+      session.signalClients = clients;
+      session.signalTopics = {
+        offer: remoteSignalTopic(config, 'offer'),
+        answer: remoteSignalTopic(config, 'answer'),
+      };
+      clients.forEach((client) => {
+        client.on('message', (topic, payload) => {
+          if (String(topic) !== session.signalTopics.offer) return;
+          remoteGuestSignalOffer(session, String(payload || ''));
+        });
+        client.subscribe(session.signalTopics.offer, { qos: 0 });
+      });
+      session.signalTimeout = setTimeout(() => {
+        if (remoteSession !== session || session.connected) return;
+        remoteSetStatus(`还没收到 ${remoteOtherName()} 的房间；让对方先点“自动开房”，或改用手动邀请码`, true);
+        remoteReset(true);
+      }, 150000);
+      session.signalHint = setTimeout(() => {
+        if (remoteSession !== session || session.connected || session.answerFor) return;
+        remoteSetStatus(`还没收到房间：确认 ${remoteOtherName()} 点的是“自动开房”；也可以改用手动邀请码`);
+      }, 20000);
+      remoteSetStatus(`正在等 ${remoteOtherName()} 开房…`);
+    } catch (err) {
+      console.error('remote.auto.join.failed', err && err.message ? err.message : String(err));
+      if (session && remoteSession === session) remoteReset(true);
+      remoteSetStatus('自动加入失败：' + (err && err.message ? err.message : err), true);
+    }
+  }
+
+  async function remoteGuestSignalOffer(session, raw) {
+    if (remoteSession !== session || !session.signalKey) return;
+    let offer = null;
+    try {
+      offer = await remoteSignalOpen(session.signalKey, raw);
+    } catch (err) {
+      return;
+    }
+    if (!offer || offer.v !== 1 || offer.role !== 'host' || !offer.sdp || !offer.id) return;
+    if (!remoteAllowed(offer.name)) return;
+    if (offer.name === remoteProfileId) return;
+    // 房主每 4 秒重发一次；只应答“活的”offer，避免连到上次崩溃残留的 retained 消息。
+    if (Date.now() - Number(offer.at || 0) > 12000) return;
+    if (session.answerFor === offer.id) return;
+    if (session.pc.signalingState !== 'stable' || session.pc.remoteDescription) return;
+    session.answerFor = offer.id;
+    session.hostName = String(offer.name);
+    session.offerId = String(offer.id);
+    window.__manorAiHost = `${session.hostName} 的 iPad`;
+    try {
+      remoteSetStatus(`收到 ${session.hostName} 的房间，正在应答…`);
+      await session.pc.setRemoteDescription(offer.sdp);
+      await session.pc.setLocalDescription(await session.pc.createAnswer());
+      await remoteGather(session.pc);
+      session.answer = {
+        v: 1,
+        role: 'answer',
+        to: session.offerId,
+        name: remoteProfileId,
+        at: Date.now(),
+        sdp: session.pc.localDescription,
+      };
+      await remotePublishAnswer(session);
+      session.answerRepublish = setInterval(() => { remotePublishAnswer(session); }, 4000);
+      remoteSetStatus(`已答应 ${session.hostName}，等对方连上…`);
+    } catch (err) {
+      session.answerFor = '';
+      console.error('remote.offer.answer.failed', err && err.message ? err.message : String(err));
+      remoteSetStatus('自动应答失败：' + (err && err.message ? err.message : err), true);
+    }
+  }
+
+  window.addEventListener('pagehide', () => {
+    if (remoteSession && remoteSession.role === 'host') remoteSignalEnd(remoteSession);
+  });
 
   function remoteEncode(value) {
     const bytes = new TextEncoder().encode(JSON.stringify(value));
@@ -1049,6 +1500,13 @@
     if (remoteSession !== session) return;
     session.connected = true;
     session.everConnected = true;
+    remoteSignalEnd(session);
+    diagPost({
+      action: 'log',
+      level: 'info',
+      event: 'remote.auto.connected',
+      detail: { role: session.role, host: session.hostName || '', auto: !!session.auto },
+    });
     if (session.role === 'host') {
       window.__manorRemoteHost = true;
       window.__manorAiHost = '本机 iPad';
@@ -1113,6 +1571,7 @@
     const session = remoteSession;
     remoteSession = null;
     if (session) {
+      remoteSignalEnd(session);
       try { if (session.dc) { session.dc.onclose = null; session.dc.onerror = null; session.dc.close(); } } catch (err) {}
       try { session.pc.close(); } catch (err) {}
       if (session.role === 'host') {

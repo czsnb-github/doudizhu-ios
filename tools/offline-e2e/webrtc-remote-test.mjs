@@ -5,6 +5,13 @@ const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080/';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const errors = [];
 
+// 每次 E2E 用独立房间，避免和家里真实的猫猫/喵喵配对撞 topic。
+const SIGNAL_ROOM = 'ci-' + Date.now().toString(36) + '-' + Math.random().toString(16).slice(2, 8);
+const SIGNAL_BROKERS = [
+  'wss://broker.emqx.io:8084/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt',
+];
+
 async function newPage(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1180, height: 688 } });
   const page = await context.newPage();
@@ -12,6 +19,9 @@ async function newPage(browser, label) {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#local-splash', { state: 'detached', timeout: 90000 });
   await page.waitForTimeout(500);
+  await page.evaluate(({ room, brokers }) => {
+    window.__MANOR_SIGNAL_BASE = { room, brokers };
+  }, { room: SIGNAL_ROOM, brokers: SIGNAL_BROKERS });
   return { context, page };
 }
 
@@ -51,9 +61,81 @@ async function openRemote(page) {
   await page.waitForSelector('#remote-modal', { state: 'visible', timeout: 10000 });
 }
 
+async function closeRemote(page) {
+  const modal = page.locator('#remote-modal');
+  if (await modal.isVisible().catch(() => false)) {
+    await page.click('[data-remote-close]');
+  }
+}
+
+async function manualHandshake(host, guest) {
+  console.log('step: manual fallback offer/answer');
+  await openRemote(host.page);
+  await host.page.click('[data-remote-host-start]');
+  await host.page.waitForFunction(() => {
+    const el = document.querySelector('[data-remote-offer]');
+    return el && el.value && el.value.length > 500;
+  }, { timeout: 40000 });
+  const offer = await host.page.inputValue('[data-remote-offer]');
+
+  await openRemote(guest.page);
+  await guest.page.click('[data-remote-tab="guest"]');
+  await guest.page.fill('[data-remote-offer-input]', offer);
+  await guest.page.click('[data-remote-guest-answer]');
+  await guest.page.waitForFunction(() => {
+    const el = document.querySelector('[data-remote-answer]');
+    return el && el.value && el.value.length > 300;
+  }, { timeout: 40000 });
+  const answer = await guest.page.inputValue('[data-remote-answer]');
+
+  await host.page.fill('[data-remote-answer-input]', answer);
+  await host.page.click('[data-remote-host-connect]');
+  await host.page.waitForFunction(() => window.__manorRemoteHost === true, { timeout: 30000 });
+  await guest.page.waitForFunction(() => window.__manorRemoteGuest === true, { timeout: 30000 });
+  await sleep(1200);
+
+  console.log('step: reset manual session');
+  // 先从客人侧重置，避免房主断开时触发客人自动刷新。
+  await openRemote(guest.page);
+  await guest.page.click('[data-remote-reset]');
+  await guest.page.waitForFunction(() => window.__manorRemoteGuest !== true, { timeout: 10000 });
+  await closeRemote(guest.page);
+
+  await openRemote(host.page);
+  if (await host.page.locator('[data-remote-reset]:visible').count()) {
+    await host.page.click('[data-remote-reset]');
+  }
+  await host.page.waitForFunction(() => window.__manorRemoteHost !== true, { timeout: 10000 });
+  await closeRemote(host.page);
+}
+
+async function automaticHandshake(host, guest) {
+  console.log('step: automatic pairing over MQTT');
+  await openRemote(host.page);
+  if (!(await host.page.locator('[data-remote-auto-host]').count())) {
+    throw new Error('缺少“自动开房”按钮');
+  }
+  await host.page.click('[data-remote-auto-host]');
+
+  await openRemote(guest.page);
+  if (!(await guest.page.locator('[data-remote-auto-join]').count())) {
+    throw new Error('缺少“自动加入”按钮');
+  }
+  await guest.page.click('[data-remote-auto-join]');
+
+  await Promise.all([
+    host.page.waitForFunction(() => window.__manorRemoteHost === true, { timeout: 90000 }),
+    guest.page.waitForFunction(() => window.__manorRemoteGuest === true, { timeout: 90000 }),
+  ]);
+  await sleep(1200);
+  console.log('step: automatic pairing connected');
+}
+
 async function main() {
   fs.mkdirSync('shots', { recursive: true });
-  const browser = await chromium.launch({ args: ['--disable-features=WebRtcHideLocalIpsWithMdns'] });
+  const launchOptions = { args: ['--disable-features=WebRtcHideLocalIpsWithMdns'] };
+  if (process.env.BROWSER_CHANNEL) launchOptions.channel = process.env.BROWSER_CHANNEL;
+  const browser = await chromium.launch(launchOptions);
   let host;
   let guest;
   try {
@@ -69,32 +151,8 @@ async function main() {
     await host.page.waitForSelector('#remote-card', { state: 'visible', timeout: 10000 });
     await guest.page.waitForSelector('#remote-card', { state: 'visible', timeout: 10000 });
 
-    console.log('step: host create offer');
-    await openRemote(host.page);
-    await host.page.click('[data-remote-host-start]');
-    await host.page.waitForFunction(() => {
-      const el = document.querySelector('[data-remote-offer]');
-      return el && el.value && el.value.length > 500;
-    }, { timeout: 40000 });
-    const offer = await host.page.inputValue('[data-remote-offer]');
-
-    console.log('step: guest answer');
-    await openRemote(guest.page);
-    await guest.page.click('[data-remote-tab="guest"]');
-    await guest.page.fill('[data-remote-offer-input]', offer);
-    await guest.page.click('[data-remote-guest-answer]');
-    await guest.page.waitForFunction(() => {
-      const el = document.querySelector('[data-remote-answer]');
-      return el && el.value && el.value.length > 300;
-    }, { timeout: 40000 });
-    const answer = await guest.page.inputValue('[data-remote-answer]');
-
-    console.log('step: host accept answer');
-    await host.page.fill('[data-remote-answer-input]', answer);
-    await host.page.click('[data-remote-host-connect]');
-    await host.page.waitForFunction(() => window.__manorRemoteHost === true, { timeout: 30000 });
-    await guest.page.waitForFunction(() => window.__manorRemoteGuest === true, { timeout: 30000 });
-    await sleep(1200);
+    await manualHandshake(host, guest);
+    await automaticHandshake(host, guest);
 
     console.log('step: login and enter table');
     await host.page.click('#login-btn');

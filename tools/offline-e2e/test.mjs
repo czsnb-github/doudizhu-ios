@@ -103,7 +103,9 @@ async function playLoop(page, label) {
 
 async function main() {
   fs.mkdirSync('shots', { recursive: true });
-  const browser = await chromium.launch({ headless: true });
+  const launchOptions = { headless: true };
+  if (process.env.BROWSER_CHANNEL) launchOptions.channel = process.env.BROWSER_CHANNEL;
+  const browser = await chromium.launch(launchOptions);
   const host = await newPage(browser, 'host');
   const guest = await newPage(browser, 'guest');
   const aiTest = await host.page.evaluate(async () => await (await fetch('/api/ai/selftest')).json());
