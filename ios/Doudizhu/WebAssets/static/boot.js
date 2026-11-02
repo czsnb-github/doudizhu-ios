@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261114a';
+  const VERSION = '20261115a';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -462,6 +462,34 @@
     }
   }
 
+  function showRestartBanner(version) {
+    if (document.getElementById('ota-restart-banner')) return;
+    if (!document.getElementById('ota-restart-style')) {
+      const style = document.createElement('style');
+      style.id = 'ota-restart-style';
+      style.textContent = [
+        '#ota-restart-banner{position:fixed;z-index:300001;left:50%;top:calc(env(safe-area-inset-top) + 12px);transform:translateX(-50%);width:min(520px,calc(100% - 24px));box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:16px;background:#fffaf0;border:2px solid rgba(79,125,87,.55);box-shadow:0 10px 30px rgba(30,45,30,.28);font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;color:#3b3026}',
+        '#ota-restart-banner .ota-restart-copy{flex:1;font-size:13px;line-height:1.45;font-weight:700}',
+        '#ota-restart-banner .ota-restart-copy small{display:block;margin-top:2px;font-size:11.5px;font-weight:600;color:#7d6a55}',
+        '#ota-restart-banner .ota-restart-btn{border:0;border-radius:999px;background:#4f7d57;color:#fff;padding:9px 12px;font-size:12px;font-weight:800;white-space:nowrap}',
+        '#ota-restart-banner .ota-restart-close{border:0;background:transparent;color:#8b7a66;font-size:18px;line-height:1;padding:2px 4px}',
+      ].join('\n');
+      document.head.appendChild(style);
+    }
+    const bar = document.createElement('div');
+    bar.id = 'ota-restart-banner';
+    bar.innerHTML = [
+      '<div class="ota-restart-copy">新离线包 v' + String(version || '') + ' 已下载',
+      '<small>请把 App 从后台完全划掉，再重新打开生效（只回桌面不算）</small></div>',
+      '<button type="button" class="ota-restart-btn" data-ota-restart-ok>知道了</button>',
+      '<button type="button" class="ota-restart-close" data-ota-restart-close aria-label="关闭">×</button>',
+    ].join('');
+    document.body.appendChild(bar);
+    const close = () => bar.remove();
+    bar.querySelector('[data-ota-restart-ok]').addEventListener('click', close);
+    bar.querySelector('[data-ota-restart-close]').addEventListener('click', close);
+  }
+
   window.manorOtaEvent = function (event) {
     if (!event || typeof event !== 'object') return;
     const status = document.getElementById('ota-status');
@@ -489,7 +517,8 @@
     } else if (event.type === 'latest') {
       setStatus('已经是最新离线包');
     } else if (event.type === 'ready') {
-      setStatus(`新离线包 ${event.version} 已装好，下次打开自动生效`);
+      setStatus(`新离线包 ${event.version} 已装好；请把 App 完全退出后再打开生效`);
+      showRestartBanner(event.version);
     } else if (event.type === 'needsShell') {
       setStatus(`新包需要 0.5.0 以上的安装包（${event.minShell}），先更新一次 IPA`);
     } else if (event.type === 'sourceSaved') {
