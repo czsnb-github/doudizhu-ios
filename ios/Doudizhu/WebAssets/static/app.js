@@ -1102,6 +1102,15 @@
     if (logged) renderCustomize();
     renderHeroRam();
     updateEntryUrl();
+    syncRemoteEntry();
+  }
+
+  function syncRemoteEntry() {
+    try {
+      const el = $('#player-id');
+      const id = (S.profile && S.profile.id) || (el && el.value) || S.idDraft || '';
+      if (window.manorRemoteSetup) window.manorRemoteSetup(String(id).trim());
+    } catch (err) {}
   }
 
   function renderHeroRam() {
@@ -2659,12 +2668,19 @@
   // ---------------------------------------------------------------- 事件绑定
 
   function bind() {
+    window.addEventListener('manor-remote-connected', () => {
+      if (S.loggedIn && S.pid) startLogin(S.pid, 'auto');
+      else toast('远程已连接，输入 ID 进庄园');
+    });
+    window.addEventListener('manor-remote-disconnected', () => {
+      toast('远程连接断开了', true);
+    });
     const loginBtn = $('#login-btn');
     if (loginBtn) loginBtn.addEventListener('click', onLoginButton);
 
     const idInput = $('#player-id');
     if (idInput) {
-      idInput.addEventListener('input', () => { S.idDraft = idInput.value; });
+      idInput.addEventListener('input', () => { S.idDraft = idInput.value; syncRemoteEntry(); });
       idInput.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') {
           event.preventDefault();

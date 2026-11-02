@@ -49,6 +49,14 @@ jobs:
           set -o pipefail
           node test.mjs 2>&1 | tee e2e.log
 
+      - name: Run WebRTC remote E2E
+        working-directory: tools/offline-e2e
+        env:
+          BASE_URL: http://127.0.0.1:8080/
+        run: |
+          set -o pipefail
+          node webrtc-remote-test.mjs 2>&1 | tee -a e2e.log
+
       - name: Upload E2E debug
         if: always()
         uses: actions/upload-artifact@v4
@@ -57,6 +65,7 @@ jobs:
           path: |
             tools/offline-e2e/e2e.log
             tools/offline-e2e/shots/offline-e2e-*.png
+            tools/offline-e2e/shots/webrtc-remote-*.png
           if-no-files-found: warn
 
       - name: Publish E2E debug release
@@ -70,3 +79,4 @@ jobs:
           files: |
             tools/offline-e2e/e2e.log
             tools/offline-e2e/shots/offline-e2e-*.png
+            tools/offline-e2e/shots/webrtc-remote-*.png
