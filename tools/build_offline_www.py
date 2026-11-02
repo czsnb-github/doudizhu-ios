@@ -31,11 +31,12 @@ def read_version() -> dict:
     data = json.loads(VERSION_FILE.read_text(encoding="utf-8"))
     version = str(data.get("version") or "").strip()
     min_shell = str(data.get("min_shell") or "0.5.0").strip()
+    label = str(data.get("label") or "").strip()[:40]
     if not re.fullmatch(r"[0-9A-Za-z._-]{1,32}", version):
         raise SystemExit("client/web_version.json 的 version 不合法")
     if not re.fullmatch(r"[0-9]+(\.[0-9]+){1,2}", min_shell):
         raise SystemExit("client/web_version.json 的 min_shell 不合法")
-    return {"version": version, "min_shell": min_shell}
+    return {"version": version, "min_shell": min_shell, "label": label}
 
 
 def build_www(dest: Path = WWW, *, version: str | None = None) -> dict:
@@ -105,6 +106,7 @@ def build_www(dest: Path = WWW, *, version: str | None = None) -> dict:
             {
                 "version": meta["version"],
                 "min_shell": meta["min_shell"],
+                "label": meta["label"],
                 "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             },
             ensure_ascii=False,

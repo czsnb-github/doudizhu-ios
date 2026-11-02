@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261115a';
+  const VERSION = '1793633578';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -15,6 +15,7 @@
   let bootTrace = [];
   const BOOT_TRACE_LIMIT = 40;
   let failureReported = false;
+  let webVersionMeta = null;
 
   const REMOTE_USERS = new Set(['喵喵', '猫猫']);
   const REMOTE_PEER = 'webrtc:guest';
@@ -479,7 +480,7 @@
     const bar = document.createElement('div');
     bar.id = 'ota-restart-banner';
     bar.innerHTML = [
-      '<div class="ota-restart-copy">新离线包 v' + String(version || '') + ' 已下载',
+      '<div class="ota-restart-copy">新离线包已下载',
       '<small>请把 App 从后台完全划掉，再重新打开生效（只回桌面不算）</small></div>',
       '<button type="button" class="ota-restart-btn" data-ota-restart-ok>知道了</button>',
       '<button type="button" class="ota-restart-close" data-ota-restart-close aria-label="关闭">×</button>',
@@ -500,7 +501,10 @@
       if (event.baseURL) homeServerBase = String(event.baseURL);
       if (version) {
         const shell = event.shellVersion ? `客户端 v${event.shellVersion}` : '';
-        const web = event.effectiveVersion ? `离线包 v${event.effectiveVersion}` : '';
+        const raw = String(event.effectiveVersion || '');
+        const meta = webVersionMeta && webVersionMeta.version === raw ? webVersionMeta : null;
+        const label = (meta && meta.label) || raw;
+        const web = label ? `离线包 ${label}` : '';
         version.textContent = [shell, web].filter(Boolean).join(' · ') || '版本未知';
       }
       if (input && document.activeElement !== input && event.baseURL) {
@@ -517,8 +521,8 @@
     } else if (event.type === 'latest') {
       setStatus('已经是最新离线包');
     } else if (event.type === 'ready') {
-      setStatus(`新离线包 ${event.version} 已装好；请把 App 完全退出后再打开生效`);
-      showRestartBanner(event.version);
+      setStatus('新离线包已下载；请把 App 完全退出后再打开生效');
+      showRestartBanner();
     } else if (event.type === 'needsShell') {
       setStatus(`新包需要 0.5.0 以上的安装包（${event.minShell}），先更新一次 IPA`);
     } else if (event.type === 'sourceSaved') {
@@ -1247,6 +1251,18 @@ local_bridge.init('/data')
 `);
     bridge = pyodide.globals.get('local_bridge');
     setStage('bridge.ready');
+    try {
+      const metaRes = await fetch('/web-version.json', { cache: 'no-store' });
+      if (metaRes.ok) {
+        const meta = await metaRes.json();
+        if (meta && meta.version) {
+          webVersionMeta = meta;
+          window.__manorWebVersionLabel = meta.label || meta.version;
+        }
+      }
+    } catch (err) {
+      trace('webversion.failed', { message: String(err && err.message || err) });
+    }
     try {
       const aiStatus = bridge.ai_status ? JSON.parse(bridge.ai_status()) : null;
       if (aiStatus) {

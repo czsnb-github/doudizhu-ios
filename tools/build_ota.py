@@ -87,6 +87,7 @@ def build_manifest(www: Path, out: Path, *, min_shell: str) -> dict:
         raise SystemExit(f"缺少 {version_file}；先运行 tools/build_offline_www.py")
     version_meta = json.loads(version_file.read_text(encoding="utf-8"))
     version = str(version_meta.get("version") or "").strip()
+    label = str(version_meta.get("label") or "").strip()[:40]
     if not re.fullmatch(r"[0-9A-Za-z._-]{1,32}", version):
         raise SystemExit("web-version.json 的 version 不合法")
     min_shell = str(min_shell or version_meta.get("min_shell") or "0.5.0")
@@ -126,6 +127,7 @@ def build_manifest(www: Path, out: Path, *, min_shell: str) -> dict:
     manifest = {
         "schema": 1,
         "version": version,
+        "label": label,
         "minShell": min_shell,
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "totalSize": total,
