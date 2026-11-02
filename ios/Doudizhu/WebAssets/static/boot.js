@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261113a';
+  const VERSION = '20261114a';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -798,7 +798,6 @@
       '.remote-modal-status{font-size:12px;line-height:1.55;margin-top:10px;color:#5f7a5a;min-height:18px}',
       '.remote-footer{display:flex;justify-content:flex-end;margin-top:12px}',
       '.remote-small{padding:6px 10px;font-size:11px}',
-      '.manor-local .remote-card{display:flex!important}',
     ].join('\n');
     document.head.appendChild(style);
   }

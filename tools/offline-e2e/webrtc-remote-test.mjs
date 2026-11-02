@@ -60,6 +60,10 @@ async function main() {
     host = await newPage(browser, 'remote-host');
     guest = await newPage(browser, 'remote-guest');
 
+    await host.page.fill('#player-id', '房主');
+    if (await host.page.locator('#remote-card').isVisible().catch(() => false)) {
+      throw new Error('非猫猫/喵喵也看到了远程互动按钮');
+    }
     await host.page.fill('#player-id', '喵喵');
     await guest.page.fill('#player-id', '猫猫');
     await host.page.waitForSelector('#remote-card', { state: 'visible', timeout: 10000 });
