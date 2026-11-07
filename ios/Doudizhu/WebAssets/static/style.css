@@ -842,6 +842,21 @@ img { display: block; max-width: 100%; }
 .topbar-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .topbar .icon-btn { width: 38px; height: 38px; background: rgba(255, 250, 240, .2); border-color: rgba(255, 250, 240, .58); box-shadow: 0 2px 0 rgba(30, 50, 32, .18); }
 .topbar .icon-btn svg { stroke: #fff9ea; width: 19px; height: 19px; }
+.remote-table-btn {
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 250, 240, .58);
+  background: rgba(79, 125, 87, .82);
+  box-shadow: 0 2px 0 rgba(30, 50, 32, .18);
+  color: #fff9ea;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.remote-table-btn:active { transform: translateY(1px); }
+.remote-table-btn.hidden { display: none; }
 .profile-chip {
   display: flex;
   align-items: center;

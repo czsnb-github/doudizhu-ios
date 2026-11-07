@@ -184,6 +184,14 @@ async function main() {
     }
     console.log(`remote AI labels: host=${hostAi} guest=${guestAi}`);
 
+    console.log('step: in-table remote entry');
+    await host.page.waitForSelector('#remote-table-btn', { state: 'visible', timeout: 10000 });
+    await guest.page.waitForSelector('#remote-table-btn', { state: 'visible', timeout: 10000 });
+    await host.page.click('#remote-table-btn');
+    await host.page.waitForSelector('#remote-modal', { state: 'visible', timeout: 10000 });
+    await host.page.click('[data-remote-close]');
+    await host.page.waitForSelector('#remote-modal', { state: 'hidden', timeout: 10000 });
+
     const [hostDone, guestDone] = await Promise.all([
       playLoop(host.page, 'remote-host'),
       playLoop(guest.page, 'remote-guest'),

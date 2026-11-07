@@ -1369,6 +1369,19 @@
       const ram = $('#chip-ram');
       if (ram) ram.innerHTML = ramSVG(me.ram.color, me.ram.stage);
     }
+    const remoteBtn = $('#remote-table-btn');
+    if (remoteBtn) {
+      const pid = (me && me.id) || (S.profile && S.profile.id) || '';
+      const allowed = typeof window.manorRemoteAllowed === 'function'
+        && window.manorRemoteAllowed(pid);
+      remoteBtn.classList.toggle('hidden', !allowed);
+      if (allowed && !remoteBtn.__manorRemoteBound) {
+        remoteBtn.__manorRemoteBound = true;
+        remoteBtn.addEventListener('click', () => {
+          if (window.manorRemoteOpen) window.manorRemoteOpen();
+        });
+      }
+    }
   }
 
   function renderSeats(v) {

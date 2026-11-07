@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1793635520';
+  const VERSION = '1794061288';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -913,6 +913,14 @@
     if (show) remoteRefreshUi();
   };
 
+  // 牌桌里也能打开远程房间：host 掉线后不必离开牌桌就能重新开房。
+  window.manorRemoteAllowed = function (rawId) {
+    return !!window.__MANOR_IOS__ && remoteAllowed(rawId);
+  };
+  window.manorRemoteOpen = function (tab) {
+    if (window.__MANOR_IOS__) remoteOpenModal(tab);
+  };
+
   function remoteBuildModal() {
     if (remoteModal) return;
     remoteInjectStyle();
@@ -1023,8 +1031,9 @@
   }
 
   // ------------------------------------------------ 自动配对（公共 MQTT 只换 SDP）
-  // 固定两账号、固定房间；SDP/ICE 用 AES-GCM 加密，连接建立后立刻清掉 retained
-  // offer 并断开 MQTT。出牌、牌桌状态和 AI 仍然只在 WebRTC DataChannel 里走。
+  // 固定两账号、固定房间；SDP/ICE 用 AES-GCM 加密。offer/answer 都是非 retained
+  // 的活消息，每隔 4 秒重发、连上即停，掉线会自动重连补发，不留残留房间。
+  // 出牌、牌桌状态和 AI 仍然只在 WebRTC DataChannel 里走。
 
   function remoteSignalConfig() {
     const override = window.__MANOR_SIGNAL_BASE;
@@ -1160,16 +1169,29 @@
       const timer = setTimeout(() => finish(false), 9000);
       client.on('connect', () => {
         clearTimeout(timer);
+        if (!settled) {
+          // 公共 broker 经常踢空闲连接；初次连上后允许掉线自愈，
+          // 否则 host 会一直显示“房间已开”，信令上却已经没有 offer。
+          try {
+            client.options.reconnectPeriod = 3000;
+            client.options.resubscribe = true;
+          } catch (err) { /* ignore */ }
+        }
         finish(true);
       });
       client.on('error', () => {
         clearTimeout(timer);
-        console.warn('remote.signal.broker.failed', url);
-        finish(false);
+        if (!settled) {
+          console.warn('remote.signal.broker.failed', url);
+          finish(false);
+        }
       });
       client.on('close', () => {
         clearTimeout(timer);
         if (!settled) finish(false);
+      });
+      client.on('offline', () => {
+        if (settled) console.warn('remote.signal.broker.offline', url);
       });
     }));
     const clients = (await Promise.all(attempts)).filter(Boolean);
@@ -1192,12 +1214,9 @@
     if (session.signalHint) { clearTimeout(session.signalHint); session.signalHint = null; }
     const clients = session.signalClients || [];
     session.signalClients = null;
-    if (session.role === 'host' && session.signalTopics) {
-      clients.forEach((client) => {
-        try { client.publish(session.signalTopics.offer, '', { qos: 0, retain: true }); } catch (err) { /* ignore */ }
-      });
-    }
-    setTimeout(() => remoteSignalClose(clients), session.role === 'host' ? 600 : 0);
+    // offer 是非 retained 的活消息，停止重发即消失，不需要再发清除消息，
+    // 也避免“清除旧房间”和“开新房间”互相覆盖的竞态。
+    remoteSignalClose(clients);
   }
 
   async function remotePublishOffer(session) {
@@ -1209,7 +1228,7 @@
       );
       if (session.signalEnded) return;
       (session.signalClients || []).forEach((client) => {
-        try { client.publish(session.signalTopics.offer, payload, { qos: 0, retain: true }); } catch (err) { /* ignore */ }
+        try { client.publish(session.signalTopics.offer, payload, { qos: 0, retain: false }); } catch (err) { /* ignore */ }
       });
     } catch (err) {
       console.warn('offer publish failed', err);
@@ -1275,6 +1294,12 @@
         client.on('message', (topic, payload) => {
           if (String(topic) !== session.signalTopics.answer) return;
           remoteHostSignalAnswer(session, String(payload || ''));
+        });
+        client.on('connect', () => {
+          // 掉线重连后立刻补发 offer，不用等下一个 4 秒周期。
+          if (remoteSession === session && !session.connected && !session.answerApplied) {
+            remotePublishOffer(session);
+          }
         });
         client.subscribe(session.signalTopics.answer, { qos: 0 });
       });
@@ -1358,6 +1383,11 @@
           if (String(topic) !== session.signalTopics.offer) return;
           remoteGuestSignalOffer(session, String(payload || ''));
         });
+        client.on('connect', () => {
+          if (remoteSession !== session || session.connected) return;
+          try { client.subscribe(session.signalTopics.offer, { qos: 0 }); } catch (err) { /* ignore */ }
+          if (session.answer) remotePublishAnswer(session);
+        });
         client.subscribe(session.signalTopics.offer, { qos: 0 });
       });
       session.signalTimeout = setTimeout(() => {
@@ -1388,7 +1418,7 @@
     if (!offer || offer.v !== 1 || offer.role !== 'host' || !offer.sdp || !offer.id) return;
     if (!remoteAllowed(offer.name)) return;
     if (offer.name === remoteProfileId) return;
-    // 房主每 4 秒重发一次；只应答“活的”offer，避免连到上次崩溃残留的 retained 消息。
+    // 房主每 4 秒重发一次活 offer；只应答最近 12 秒内的，避免连到早已停发的旧房间。
     if (Date.now() - Number(offer.at || 0) > 12000) return;
     if (session.answerFor === offer.id) return;
     if (session.pc.signalingState !== 'stable' || session.pc.remoteDescription) return;
