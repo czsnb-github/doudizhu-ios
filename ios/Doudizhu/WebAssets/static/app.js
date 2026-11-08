@@ -2682,11 +2682,27 @@
 
   function bind() {
     window.addEventListener('manor-remote-connected', () => {
+      // 取消可能还在排队的本地登录，避免客人登录到本机引擎；只有本来就在登录
+      // （已登录或正在 pending）才把这次登录重发到 host，不替没点登录的用户自动登录。
+      if (window.manorCancelPendingLogin) window.manorCancelPendingLogin();
+      const pendingId = S.pendingId;
+      clearTimeout(S.loginTimer);
+      S.pendingLogin = false;
+      S.pendingId = null;
       if (S.loggedIn && S.pid) startLogin(S.pid, 'auto');
+      else if (pendingId) startLogin(pendingId, 'auto');
       else toast('远程已连接，输入 ID 进庄园');
     });
-    window.addEventListener('manor-remote-disconnected', () => {
+    window.addEventListener('manor-remote-disconnected', (event) => {
       toast('远程连接断开了', true);
+      const role = event && event.detail && event.detail.role;
+      if (role === 'guest') {
+        // 客人端稍后会自动刷新；先收回首页，清掉残留的 host 牌桌/AI 标签，
+        // 避免这几秒里的点击落到本机引擎。host 端保留它的本地牌桌。
+        resetLocalPlayer();
+        showEntryScreen();
+        renderEntry();
+      }
     });
     const loginBtn = $('#login-btn');
     if (loginBtn) loginBtn.addEventListener('click', onLoginButton);

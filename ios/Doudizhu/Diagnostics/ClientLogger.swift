@@ -109,7 +109,9 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
                 item["detail"] = Self.jsonSafe(detail)
             }
             self.events.append(item)
-            if self.events.count > self.maxEvents {
+            // 上传进行中先不裁剪，避免把已发送前缀裁掉导致回收计数错位；
+            // 上传结束回收 sentCount 后，下一次 record 会按需裁剪。
+            if self.events.count > self.maxEvents && !self.uploading {
                 self.events.removeFirst(self.events.count - self.maxEvents)
             }
             self.persistLocked()
@@ -171,6 +173,7 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
                 return
             }
             self.uploading = true
+            let sentCount = self.events.count
             let payload = self.payloadLocked(reason: reason)
             guard JSONSerialization.isValidJSONObject(payload),
                   let data = try? JSONSerialization.data(withJSONObject: payload) else {
@@ -190,7 +193,8 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
                     self.uploading = false
                     if let http = response as? HTTPURLResponse, http.statusCode == 200 {
                         print("MANOR diag uploaded id=\(String(data: data ?? Data(), encoding: .utf8) ?? "")")
-                        self.events.removeAll(keepingCapacity: true)
+                        // 只回收本次确实发送的前缀；上传期间新产生的日志保留待下次发送。
+                        self.events.removeFirst(min(sentCount, self.events.count))
                         self.persistLocked()
                     } else if let error {
                         print("MANOR diag upload failed: \(error.localizedDescription)")

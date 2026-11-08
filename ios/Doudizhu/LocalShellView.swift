@@ -111,6 +111,7 @@ final class LocalShellModel: ObservableObject {
     private var activeVersion: String?
     private var started = false
     private var bundleFallbackTried = false
+    private var ready = false
     private var watchdog: DispatchWorkItem?
     private var observers: [NSObjectProtocol] = []
 
@@ -162,6 +163,7 @@ final class LocalShellModel: ObservableObject {
     private func launchServer(overlayRoot: URL?) {
         watchdog?.cancel()
         watchdog = nil
+        ready = false
         server?.stop()
         url = nil
         errorText = nil
@@ -230,8 +232,15 @@ final class LocalShellModel: ObservableObject {
     func scenePhaseChanged(_ phase: ScenePhase) {
         if phase == .active {
             setIdleTimer(url != nil)
+            // 回到前台才继续计时：后台期间 Pyodide 被挂起，不应计入启动超时。
+            if !ready && url != nil && watchdog == nil {
+                scheduleWatchdog()
+            }
         } else {
             setIdleTimer(false)
+            // 暂停看门狗，避免恢复前台时补 fires 把健康离线包误判超时。
+            watchdog?.cancel()
+            watchdog = nil
         }
     }
 
@@ -250,6 +259,7 @@ final class LocalShellModel: ObservableObject {
     private func bootReady() {
         watchdog?.cancel()
         watchdog = nil
+        ready = true
         rescueText = nil
         errorText = nil
         overlayActive = OtaStore().activeRoot() != nil
@@ -287,12 +297,12 @@ final class LocalShellModel: ObservableObject {
         ClientLogger.shared.flush()
         if overlayActive && !bundleFallbackTried {
             bundleFallbackTried = true
-            ClientLogger.shared.record("rescue.rollback", detail: ["rejected": activeVersion ?? ""])
-            otaStore?.deactivate(rejected: activeVersion)
-            otaStore = OtaStore()
-            activeVersion = nil
-            overlayActive = false
-            rescueText = "离线包启动超时，已切回安装包版本重试…"
+            // 超时只本次切回安装包，不把版本记为 rejected：超时可能只是设备慢/被挂起，
+            // 永久拉黑会让健康离线包再也装不回来。真正的启动错误走 bootFailed 才拉黑。
+            ClientLogger.shared.record("rescue.rollback", detail: [
+                "version": activeVersion ?? "", "reason": "timeout-session-only",
+            ])
+            rescueText = "离线包启动超时，本次先切回安装包版本；下次启动会再试离线包。"
             launchServer(overlayRoot: nil)
             return
         }

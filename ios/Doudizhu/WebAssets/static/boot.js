@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1794061288';
+  const VERSION = '1794116986';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -45,6 +45,7 @@
   let remoteLastStatus = '';
   let remoteLastError = false;
   let remoteMqttLoader = null;
+  let remoteReloadTimer = null;
 
   function diagHandler() {
     return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.manorDiag;
@@ -250,7 +251,7 @@
         const text = String(data);
         let message = null;
         try { message = JSON.parse(text); } catch (err) { message = null; }
-        if (message && message.type === 'login') scheduleAutoSync(1800);
+        if (message && message.type === 'login' && !window.__manorPeerMode) scheduleAutoSync(1800);
         if (message && message.type === 'login' && !window.__manorPeerMode
             && queueLoginForSync(text, message)) {
           return;
@@ -356,6 +357,9 @@
         try { bridge.apply_profile(JSON.stringify(msg.me)); } catch (err) {}
       }
     } catch (err) {}
+    // 客人端也要在牌局结束时触发同步，把刚合并的进度推回家庭服务器，
+    // 否则只能等 180 秒定时/切前台才同步。
+    maybeSyncAfterState(text);
     deliverToUI(text);
   }
 
@@ -712,6 +716,11 @@
     });
     return true;
   }
+
+  // 远程连上时取消尚未落地的本地登录排队，避免客人误登录到本机引擎。
+  window.manorCancelPendingLogin = function () {
+    pendingLoginText = null;
+  };
 
   function setupOta() {
     if (!otaHandler()) return;
@@ -1330,6 +1339,9 @@
     } catch (err) {
       return;
     }
+    // 多个 broker 会并发投递同一条 answer；解密是异步的，回来后再查一次，
+    // 避免两条消息都通过顶部守卫、重复 setRemoteDescription 把状态搞乱。
+    if (remoteSession !== session || session.answerApplied) return;
     if (!answer || answer.v !== 1 || answer.role !== 'answer' || !answer.sdp) return;
     if (!session.signal || answer.to !== session.signal.id) return;
     if (!remoteAllowed(answer.name)) return;
@@ -1425,7 +1437,7 @@
     session.answerFor = offer.id;
     session.hostName = String(offer.name);
     session.offerId = String(offer.id);
-    window.__manorAiHost = `${session.hostName} 的 iPad`;
+    // __manorAiHost 只在 DataChannel 真正打开时设置，避免应答失败时 UI 误称 AI 在远端。
     try {
       remoteSetStatus(`收到 ${session.hostName} 的房间，正在应答…`);
       await session.pc.setRemoteDescription(offer.sdp);
@@ -1450,7 +1462,9 @@
   }
 
   window.addEventListener('pagehide', () => {
-    if (remoteSession && remoteSession.role === 'host') remoteSignalEnd(remoteSession);
+    // 页面卸载/进 bfcache 时彻底重置：只清信令会留下“房间已开”却不再发布、
+    // 也没有超时的僵尸会话。WebRTC 连接本来也活不过页面卸载。
+    if (remoteSession) remoteReset(true);
   });
 
   function remoteEncode(value) {
@@ -1581,7 +1595,7 @@
     session.rejected = true;
     try { if (session.dc) session.dc.send(JSON.stringify({ type: 'error', message })); } catch (err) {}
     remoteSetStatus(message, true);
-    setTimeout(() => remoteReset(true), 500);
+    setTimeout(() => { if (remoteSession === session) remoteReset(true); }, 500);
   }
 
   function remoteConnectionLost(session, message) {
@@ -1591,13 +1605,19 @@
     const role = session.role;
     remoteReset(true);
     remoteSetStatus(wasRejected ? '远程连接被拒绝' : message, !wasRejected);
-    try { window.dispatchEvent(new Event('manor-remote-disconnected')); } catch (err) {}
+    try { window.dispatchEvent(new CustomEvent('manor-remote-disconnected', { detail: { role } })); } catch (err) {}
     if (role === 'guest' && wasConnected && !wasRejected) {
-      setTimeout(() => { try { window.location.reload(); } catch (err) {} }, 2600);
+      if (remoteReloadTimer) clearTimeout(remoteReloadTimer);
+      remoteReloadTimer = setTimeout(() => {
+        remoteReloadTimer = null;
+        try { window.location.reload(); } catch (err) {}
+      }, 2600);
     }
   }
 
   function remoteReset(silent) {
+    // 新会话/重置时取消待执行的客人自动刷新，别把刚建好的连接刷掉。
+    if (remoteReloadTimer) { clearTimeout(remoteReloadTimer); remoteReloadTimer = null; }
     const session = remoteSession;
     remoteSession = null;
     if (session) {
