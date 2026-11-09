@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1794116986';
+  const VERSION = '1794224448';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -46,6 +46,7 @@
   let remoteLastError = false;
   let remoteMqttLoader = null;
   let remoteReloadTimer = null;
+  let remoteHostReopens = 0;
 
   function diagHandler() {
     return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.manorDiag;
@@ -1221,11 +1222,20 @@
     if (session.answerRepublish) { clearInterval(session.answerRepublish); session.answerRepublish = null; }
     if (session.signalTimeout) { clearTimeout(session.signalTimeout); session.signalTimeout = null; }
     if (session.signalHint) { clearTimeout(session.signalHint); session.signalHint = null; }
+    if (session.lanOfferTimer) { clearInterval(session.lanOfferTimer); session.lanOfferTimer = null; }
+    if (session.lanAnswerTimer) { clearInterval(session.lanAnswerTimer); session.lanAnswerTimer = null; }
+    const wasLanHost = session.lanActive && session.role === 'host';
+    session.lanActive = false;
     const clients = session.signalClients || [];
     session.signalClients = null;
     // offer 是非 retained 的活消息，停止重发即消失，不需要再发清除消息，
     // 也避免“清除旧房间”和“开新房间”互相覆盖的竞态。
     remoteSignalClose(clients);
+    if (wasLanHost) {
+      // 清掉家庭服务器上的 offer（尽力而为；TTL 也会兜底）。
+      const room = remoteSignalConfig().room;
+      remoteLanRequest('POST', `/api/signal/${room}/offer`, { blob: '' }, 1500).catch(() => {});
+    }
   }
 
   async function remotePublishOffer(session) {
@@ -1245,7 +1255,7 @@
   }
 
   async function remotePublishAnswer(session) {
-    if (remoteSession !== session || !session.signalKey || !session.answer || !session.signalClients) return;
+    if (remoteSession !== session || !session.signalKey || !session.answer) return;
     try {
       const payload = await remoteSignalSeal(
         session.signalKey,
@@ -1255,9 +1265,131 @@
       (session.signalClients || []).forEach((client) => {
         try { client.publish(session.signalTopics.answer, payload, { qos: 0, retain: false }); } catch (err) { /* ignore */ }
       });
+      if (session.lanActive) {
+        const room = remoteSignalConfig().room;
+        remoteLanRequest('POST', `/api/signal/${room}/answer`, { blob: payload }, 2500).catch(() => {});
+      }
     } catch (err) {
       console.warn('answer publish failed', err);
     }
+  }
+
+  // ---------------------------------------------------- 局域网优先信令（家庭服务器中继）
+  // 同 Wi-Fi 时走家庭服务器毫秒级配对；用 XHR 直连，避开把 /api/ 劫持到本机引擎的 fetch shim。
+  function remoteLanBase() {
+    const override = window.__MANOR_HOME_SERVER;
+    return String(override || serverBase() || '').replace(/\/+$/, '');
+  }
+
+  function remoteLanRequest(method, path, body, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open(method, remoteLanBase() + path, true);
+        xhr.timeout = timeoutMs || 2500;
+        if (body != null) xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try { resolve(JSON.parse(xhr.responseText)); } catch (err) { reject(err); }
+          } else {
+            reject(new Error('LAN HTTP ' + xhr.status));
+          }
+        };
+        xhr.onerror = () => reject(new Error('LAN 网络错误'));
+        xhr.ontimeout = () => reject(new Error('LAN 超时'));
+        xhr.send(body != null ? JSON.stringify(body) : null);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  async function remoteLanReachable() {
+    try {
+      await remoteLanRequest('GET', '/api/info', null, 1500);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  // host 在跑 MQTT 的同时，也在家庭服务器上 advertise/监听 answer；哪边先回都接。
+  async function remoteStartLanHost(session) {
+    if (!(await remoteLanReachable())) return;
+    if (remoteSession !== session || session.connected || session.answerApplied) return;
+    session.lanActive = true;
+    const room = remoteSignalConfig().room;
+    const postOffer = async () => {
+      if (remoteSession !== session || session.connected || session.answerApplied || !session.lanActive) return;
+      try {
+        const blob = await remoteSignalSeal(
+          session.signalKey,
+          Object.assign({}, session.signal, { at: Date.now() }),
+        );
+        if (remoteSession !== session || session.signalEnded) return;
+        await remoteLanRequest('POST', `/api/signal/${room}/offer`, { blob }, 2500);
+      } catch (err) { /* LAN 可能断了，MQTT 仍兜底 */ }
+    };
+    const pollAnswer = async () => {
+      if (remoteSession !== session || session.connected || session.answerApplied || !session.lanActive) return;
+      try {
+        const res = await remoteLanRequest('GET', `/api/signal/${room}/answer?since=0`, null, 2500);
+        if (res && res.blob) remoteHostSignalAnswer(session, String(res.blob));
+      } catch (err) { /* ignore */ }
+    };
+    await postOffer();
+    if (remoteSession !== session || session.signalEnded) return;
+    session.lanOfferTimer = setInterval(postOffer, 3000);
+    session.lanAnswerTimer = setInterval(pollAnswer, 400);
+  }
+
+  // guest 先在家庭服务器上找活的 offer；找不到（或 LAN 不可用）再回落公共 MQTT。
+  async function remoteProbeLanOffer(session, windowMs) {
+    if (!(await remoteLanReachable())) return null;
+    const room = remoteSignalConfig().room;
+    const deadline = Date.now() + windowMs;
+    while (Date.now() < deadline) {
+      if (remoteSession !== session) return null;
+      try {
+        const res = await remoteLanRequest('GET', `/api/signal/${room}/offer?since=0`, null, 1500);
+        if (res && res.blob) {
+          try {
+            const offer = await remoteSignalOpen(session.signalKey, String(res.blob));
+            if (offer && offer.v === 1 && offer.role === 'host' && offer.sdp && offer.id
+                && remoteAllowed(offer.name) && offer.name !== (session.selfId || remoteProfileId)
+                && Date.now() - Number(offer.at || 0) <= 12000) {
+              return String(res.blob);
+            }
+          } catch (err) { /* 不是给我们的 blob */ }
+        }
+      } catch (err) {
+        return null;  // LAN 不通，回落 MQTT
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    return null;
+  }
+
+  // 客人通过家庭服务器配对：应答直接 POST 回中继，host 轮询拿到后直连。
+  async function remoteGuestUseLan(session, blob) {
+    const config = remoteSignalConfig();
+    session.lanActive = true;
+    session.signalClients = [];
+    session.signalTopics = {
+      offer: remoteSignalTopic(config, 'offer'),
+      answer: remoteSignalTopic(config, 'answer'),
+    };
+    session.signalTimeout = setTimeout(() => {
+      if (remoteSession !== session || session.connected) return;
+      remoteSetStatus(`还没连上 ${remoteOtherName()}；让对方先点“自动开房”，或改用手动邀请码`, true);
+      remoteReset(true);
+    }, 150000);
+    session.signalHint = setTimeout(() => {
+      if (remoteSession !== session || session.connected || session.answerFor) return;
+      remoteSetStatus(`还没收到房间：确认 ${remoteOtherName()} 点的是“自动开房”；也可以改用手动邀请码`);
+    }, 20000);
+    remoteSetStatus(`正在通过家庭网络连 ${remoteOtherName()}…`);
+    await remoteGuestSignalOffer(session, blob);
   }
 
   async function remoteAutoHost() {
@@ -1275,6 +1407,7 @@
       const key = await remoteSignalKey(config);
       session = remoteCreatePeer('host');
       session.hostName = remoteProfileId;
+      session.selfId = remoteProfileId;
       session.auto = true;
       session.signalKey = key;
       const dc = session.pc.createDataChannel('manor', { ordered: true });
@@ -1324,6 +1457,8 @@
         remoteSetStatus(`还没配上：确认 ${remoteOtherName()} 点的是“自动加入”；也可以改用手动邀请码`);
       }, 20000);
       remoteSetStatus(`房间已开，等 ${remoteOtherName()} 点“自动加入”…`);
+      // 同 Wi-Fi 时同时在家庭服务器上 advertise，客人可秒配；MQTT 继续兜底远端。
+      remoteStartLanHost(session);
     } catch (err) {
       console.error('remote.auto.host.failed', err && err.message ? err.message : String(err));
       if (session && remoteSession === session) remoteReset(true);
@@ -1379,9 +1514,17 @@
       const key = await remoteSignalKey(config);
       session = remoteCreatePeer('guest');
       session.auto = true;
+      session.selfId = remoteProfileId;
       session.signalKey = key;
       session.pc.ondatachannel = (event) => remoteBindChannel(session, event.channel);
       remoteSetTab('guest');
+      remoteSetStatus('正在找房间（优先家庭网络）…');
+      const lanBlob = await remoteProbeLanOffer(session, 2500);
+      if (remoteSession !== session) return;
+      if (lanBlob) {
+        await remoteGuestUseLan(session, lanBlob);
+        return;
+      }
       remoteSetStatus('正在连公共信令（只交换连接信息）…');
       const clients = await remoteSignalClients(config, 'guest');
       if (remoteSession !== session) { remoteSignalClose(clients); return; }
@@ -1429,7 +1572,7 @@
     }
     if (!offer || offer.v !== 1 || offer.role !== 'host' || !offer.sdp || !offer.id) return;
     if (!remoteAllowed(offer.name)) return;
-    if (offer.name === remoteProfileId) return;
+    if (offer.name === (session.selfId || remoteProfileId)) return;
     // 房主每 4 秒重发一次活 offer；只应答最近 12 秒内的，避免连到早已停发的旧房间。
     if (Date.now() - Number(offer.at || 0) > 12000) return;
     if (session.answerFor === offer.id) return;
@@ -1447,7 +1590,7 @@
         v: 1,
         role: 'answer',
         to: session.offerId,
-        name: remoteProfileId,
+        name: session.selfId || remoteProfileId,
         at: Date.now(),
         sdp: session.pc.localDescription,
       };
@@ -1466,6 +1609,29 @@
     // 也没有超时的僵尸会话。WebRTC 连接本来也活不过页面卸载。
     if (remoteSession) remoteReset(true);
   });
+
+  // 客人掉线刷新后的一次性自动重连：记住的 ID 自动加入，连上后由 app.js 自动登录进桌。
+  function remoteTryResume() {
+    if (!window.__MANOR_IOS__) return;
+    let raw = null;
+    try { raw = localStorage.getItem('manor.remoteResume'); } catch (err) { return; }
+    if (!raw) return;
+    try { localStorage.removeItem('manor.remoteResume'); } catch (err) { /* ignore */ }
+    let info = null;
+    try { info = JSON.parse(raw); } catch (err) { return; }
+    if (!info || !remoteAllowed(info.id)) return;
+    if (Date.now() - Number(info.at || 0) > 300000) return;  // 5 分钟内有效
+    remoteProfileId = String(info.id).trim();
+    window.__manorRemoteResumeId = remoteProfileId;
+    if (!remoteUi) remoteBuildCard();
+    if (remoteUi) { remoteUi.card.style.display = ''; remoteRefreshUi(); }
+    remoteAutoJoin();
+  }
+
+  // 诊断/测试用：主动触发一次掉线，走真实的自动重连流程。
+  window.__manorRemoteDrop = function () {
+    if (remoteSession) remoteConnectionLost(remoteSession, '连接中断');
+  };
 
   function remoteEncode(value) {
     const bytes = new TextEncoder().encode(JSON.stringify(value));
@@ -1554,11 +1720,13 @@
     if (session.role === 'host') {
       window.__manorRemoteHost = true;
       window.__manorAiHost = '本机 iPad';
+      remoteHostReopens = 0;
       remoteSetStatus('已连上家人；现在去登录/进桌，AI 在这台 iPad 上推理');
     } else {
       window.__manorPeerMode = true;
       window.__manorRemoteGuest = true;
       window.__manorAiHost = `${session.hostName || '房主'} 的 iPad`;
+      try { localStorage.removeItem('manor.remoteResume'); } catch (err) { /* ignore */ }
       remoteSetStatus(`已连上 ${session.hostName || '房主'}；现在去登录/进桌`);
       try { window.dispatchEvent(new Event('manor-remote-connected')); } catch (err) {}
     }
@@ -1602,11 +1770,30 @@
     if (remoteSession !== session) return;
     const wasConnected = session.everConnected;
     const wasRejected = session.rejected;
+    const wasAuto = session.auto;
     const role = session.role;
     remoteReset(true);
     remoteSetStatus(wasRejected ? '远程连接被拒绝' : message, !wasRejected);
     try { window.dispatchEvent(new CustomEvent('manor-remote-disconnected', { detail: { role } })); } catch (err) {}
+    if (role === 'host' && wasConnected && !wasRejected && wasAuto && remoteHostReopens < 4) {
+      // 掉线后自动重开房间等家人回来；牌桌座位已托管，客人重连登录后即可 reclaim。
+      remoteHostReopens += 1;
+      remoteSetStatus(`连接断了，正在自动重开房间等 ${remoteOtherName()} 回来…`);
+      setTimeout(() => {
+        if (!remoteSession && remoteAllowed(remoteProfileId)) remoteAutoHost();
+      }, 2000);
+    }
     if (role === 'guest' && wasConnected && !wasRejected) {
+      if (wasAuto) {
+        // 记住身份，刷新后自动重连+登录，无需再手动点。一次性标记，防止无限刷新。
+        // 用会话建立时捕获的 selfId：remoteProfileId 可能已被入口重渲染清空。
+        const rid = session.selfId || remoteProfileId;
+        if (remoteAllowed(rid)) {
+          try {
+            localStorage.setItem('manor.remoteResume', JSON.stringify({ id: rid, at: Date.now() }));
+          } catch (err) { /* ignore */ }
+        }
+      }
       if (remoteReloadTimer) clearTimeout(remoteReloadTimer);
       remoteReloadTimer = setTimeout(() => {
         remoteReloadTimer = null;
@@ -1805,6 +1992,7 @@ local_bridge.init('/data')
     setStage('app.ready');
     diagPost({ action: 'ready', webVersion: VERSION });
     window.__MANOR_READY__ = true;
+    remoteTryResume();
     setInterval(syncData, 2000);
     window.addEventListener('pagehide', syncData);
   }

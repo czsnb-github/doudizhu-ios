@@ -16,12 +16,16 @@ async function newPage(browser, label) {
   const context = await browser.newContext({ viewport: { width: 1180, height: 688 } });
   const page = await context.newPage();
   page.on('pageerror', (err) => errors.push(`${label} pageerror: ${err.message}`));
+  // 用 init script 注入，刷新后仍在（自动重连会在 boot 阶段读取这些覆盖）。
+  await page.addInitScript(({ room, brokers, home }) => {
+    window.__MANOR_SIGNAL_BASE = { room, brokers };
+    // 把 LAN 信令指向静态测试服务器（没有 /api/signal），确定性地走 MQTT 回落，
+    // 同时避免 E2E 写到正式服。LAN 路径另有本地验证。
+    window.__MANOR_HOME_SERVER = home;
+  }, { room: SIGNAL_ROOM, brokers: SIGNAL_BROKERS, home: BASE });
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#local-splash', { state: 'detached', timeout: 90000 });
   await page.waitForTimeout(500);
-  await page.evaluate(({ room, brokers }) => {
-    window.__MANOR_SIGNAL_BASE = { room, brokers };
-  }, { room: SIGNAL_ROOM, brokers: SIGNAL_BROKERS });
   return { context, page };
 }
 
@@ -75,7 +79,7 @@ async function manualHandshake(host, guest) {
   await host.page.waitForFunction(() => {
     const el = document.querySelector('[data-remote-offer]');
     return el && el.value && el.value.length > 500;
-  }, { timeout: 40000 });
+  }, null, { timeout: 40000 });
   const offer = await host.page.inputValue('[data-remote-offer]');
 
   await openRemote(guest.page);
@@ -85,27 +89,27 @@ async function manualHandshake(host, guest) {
   await guest.page.waitForFunction(() => {
     const el = document.querySelector('[data-remote-answer]');
     return el && el.value && el.value.length > 300;
-  }, { timeout: 40000 });
+  }, null, { timeout: 40000 });
   const answer = await guest.page.inputValue('[data-remote-answer]');
 
   await host.page.fill('[data-remote-answer-input]', answer);
   await host.page.click('[data-remote-host-connect]');
-  await host.page.waitForFunction(() => window.__manorRemoteHost === true, { timeout: 30000 });
-  await guest.page.waitForFunction(() => window.__manorRemoteGuest === true, { timeout: 30000 });
+  await host.page.waitForFunction(() => window.__manorRemoteHost === true, null, { timeout: 30000 });
+  await guest.page.waitForFunction(() => window.__manorRemoteGuest === true, null, { timeout: 30000 });
   await sleep(1200);
 
   console.log('step: reset manual session');
   // 先从客人侧重置，避免房主断开时触发客人自动刷新。
   await openRemote(guest.page);
   await guest.page.click('[data-remote-reset]');
-  await guest.page.waitForFunction(() => window.__manorRemoteGuest !== true, { timeout: 10000 });
+  await guest.page.waitForFunction(() => window.__manorRemoteGuest !== true, null, { timeout: 10000 });
   await closeRemote(guest.page);
 
   await openRemote(host.page);
   if (await host.page.locator('[data-remote-reset]:visible').count()) {
     await host.page.click('[data-remote-reset]');
   }
-  await host.page.waitForFunction(() => window.__manorRemoteHost !== true, { timeout: 10000 });
+  await host.page.waitForFunction(() => window.__manorRemoteHost !== true, null, { timeout: 10000 });
   await closeRemote(host.page);
 }
 
@@ -124,8 +128,8 @@ async function automaticHandshake(host, guest) {
   await guest.page.click('[data-remote-auto-join]');
 
   await Promise.all([
-    host.page.waitForFunction(() => window.__manorRemoteHost === true, { timeout: 90000 }),
-    guest.page.waitForFunction(() => window.__manorRemoteGuest === true, { timeout: 90000 }),
+    host.page.waitForFunction(() => window.__manorRemoteHost === true, null, { timeout: 90000 }),
+    guest.page.waitForFunction(() => window.__manorRemoteGuest === true, null, { timeout: 90000 }),
   ]);
   await sleep(1200);
   console.log('step: automatic pairing connected');
@@ -161,7 +165,7 @@ async function main() {
     await guest.page.click('#login-btn');
     await guest.page.waitForSelector('#customize:not(.hidden)', { timeout: 25000 });
     await guest.page.click('#enter-table');
-    await host.page.waitForFunction(() => document.body.innerText.includes('猫猫'), { timeout: 20000 });
+    await host.page.waitForFunction(() => document.body.innerText.includes('猫猫'), null, { timeout: 20000 });
 
     console.log('step: prepare and play');
     await prepare(host.page);
@@ -170,11 +174,11 @@ async function main() {
       host.page.waitForFunction(() => {
         const round = document.querySelector('#round-pill')?.textContent || '';
         return round.includes('第 1 局') && document.querySelectorAll('#hand .card').length >= 17;
-      }, { timeout: 30000 }),
+      }, null, { timeout: 30000 }),
       guest.page.waitForFunction(() => {
         const round = document.querySelector('#round-pill')?.textContent || '';
         return round.includes('第 1 局') && document.querySelectorAll('#hand .card').length >= 17;
-      }, { timeout: 30000 }),
+      }, null, { timeout: 30000 }),
     ]);
 
     const hostAi = (await host.page.textContent('#ai-host-chip')) || '';
@@ -191,6 +195,17 @@ async function main() {
     await host.page.waitForSelector('#remote-modal', { state: 'visible', timeout: 10000 });
     await host.page.click('[data-remote-close]');
     await host.page.waitForSelector('#remote-modal', { state: 'hidden', timeout: 10000 });
+
+    console.log('step: guest drop and auto-reconnect');
+    await guest.page.evaluate(() => window.__manorRemoteDrop());
+    // 客人掉线→刷新→自动重连→自动登录进桌；host 自动重开房间等它回来。
+    await guest.page.waitForFunction(() => {
+      const btn = document.querySelector('#remote-table-btn');
+      return window.__manorRemoteGuest === true && btn && !btn.classList.contains('hidden');
+    }, null, { timeout: 90000 });
+    await host.page.waitForFunction(() => document.body.innerText.includes('猫猫'), null, { timeout: 30000 });
+    await sleep(1500);
+    console.log('step: auto-reconnect restored guest into the same table');
 
     const [hostDone, guestDone] = await Promise.all([
       playLoop(host.page, 'remote-host'),
