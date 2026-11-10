@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1794224448';
+  const VERSION = '1794313268';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
@@ -47,6 +47,9 @@
   let remoteMqttLoader = null;
   let remoteReloadTimer = null;
   let remoteHostReopens = 0;
+  let remoteGuestReloads = 0;
+  let remoteGuestReloadWindow = 0;
+  let remoteStableTimer = null;
 
   function diagHandler() {
     return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.manorDiag;
@@ -403,10 +406,15 @@
     } else if (event.type === 'peerleft') {
       setStatus(`家人 ${event.name} 离开了`);
     } else if (event.type === 'disconnected') {
+      const wasPeer = window.__manorPeerMode;
       window.__manorPeerMode = false;
       window.__manorAiHost = '';
       setStatus('联机断开了，重新找牌桌或继续本机单机');
       if (actions) actions.classList.remove('hidden');
+      // 蓝牙/MPC 客人掉线也要清掉残留的 host 牌桌状态，避免动作落到本机引擎。
+      if (wasPeer) {
+        try { window.dispatchEvent(new CustomEvent('manor-remote-disconnected', { detail: { role: 'guest' } })); } catch (err) { /* ignore */ }
+      }
     } else if (event.type === 'peerdata') {
       try {
         if (bridge && event.text) bridge.host_receive(String(event.from || ''), String(event.text));
@@ -417,10 +425,14 @@
       setStatus(event.message || '联机失败');
       if (actions) actions.classList.remove('hidden');
     } else if (event.type === 'stopped') {
+      const wasPeer = window.__manorPeerMode;
       window.__manorPeerMode = false;
       window.__manorAiHost = '';
       setStatus('已离开联机');
       if (actions) actions.classList.remove('hidden');
+      if (wasPeer) {
+        try { window.dispatchEvent(new CustomEvent('manor-remote-disconnected', { detail: { role: 'guest' } })); } catch (err) { /* ignore */ }
+      }
     }
   };
 
@@ -1390,6 +1402,7 @@
     }, 20000);
     remoteSetStatus(`正在通过家庭网络连 ${remoteOtherName()}…`);
     await remoteGuestSignalOffer(session, blob);
+    return !!session.answerFor;
   }
 
   async function remoteAutoHost() {
@@ -1522,8 +1535,14 @@
       const lanBlob = await remoteProbeLanOffer(session, 2500);
       if (remoteSession !== session) return;
       if (lanBlob) {
-        await remoteGuestUseLan(session, lanBlob);
-        return;
+        const lanOk = await remoteGuestUseLan(session, lanBlob);
+        if (remoteSession !== session) return;
+        if (lanOk) return;
+        // 探到的 offer 已失效/没接上：清掉 LAN 状态与定时器，回落公共 MQTT，
+        // 不要 committing 到 LAN 空等 150 秒。
+        session.lanActive = false;
+        if (session.signalTimeout) { clearTimeout(session.signalTimeout); session.signalTimeout = null; }
+        if (session.signalHint) { clearTimeout(session.signalHint); session.signalHint = null; }
       }
       remoteSetStatus('正在连公共信令（只交换连接信息）…');
       const clients = await remoteSignalClients(config, 'guest');
@@ -1720,7 +1739,6 @@
     if (session.role === 'host') {
       window.__manorRemoteHost = true;
       window.__manorAiHost = '本机 iPad';
-      remoteHostReopens = 0;
       remoteSetStatus('已连上家人；现在去登录/进桌，AI 在这台 iPad 上推理');
     } else {
       window.__manorPeerMode = true;
@@ -1730,6 +1748,15 @@
       remoteSetStatus(`已连上 ${session.hostName || '房主'}；现在去登录/进桌`);
       try { window.dispatchEvent(new Event('manor-remote-connected')); } catch (err) {}
     }
+    // 只有连接稳定 15 秒才重置重连预算，避免 flapping 链路无限重开/刷新。
+    if (remoteStableTimer) clearTimeout(remoteStableTimer);
+    remoteStableTimer = setTimeout(() => {
+      remoteStableTimer = null;
+      if (remoteSession === session && session.connected) {
+        remoteHostReopens = 0;
+        remoteGuestReloads = 0;
+      }
+    }, 15000);
     setTimeout(() => {
       if (remoteModal) remoteModal.style.display = 'none';
     }, 900);
@@ -1784,21 +1811,35 @@
       }, 2000);
     }
     if (role === 'guest' && wasConnected && !wasRejected) {
+      let doReload = true;
       if (wasAuto) {
-        // 记住身份，刷新后自动重连+登录，无需再手动点。一次性标记，防止无限刷新。
-        // 用会话建立时捕获的 selfId：remoteProfileId 可能已被入口重渲染清空。
-        const rid = session.selfId || remoteProfileId;
-        if (remoteAllowed(rid)) {
-          try {
-            localStorage.setItem('manor.remoteResume', JSON.stringify({ id: rid, at: Date.now() }));
-          } catch (err) { /* ignore */ }
+        // 自动重连有预算：10 分钟内最多 6 次，flapping 链路不会无限刷新耗电。
+        const now = Date.now();
+        if (now - remoteGuestReloadWindow > 600000) {
+          remoteGuestReloadWindow = now;
+          remoteGuestReloads = 0;
+        }
+        if (remoteGuestReloads >= 6) {
+          doReload = false;
+          remoteSetStatus('连续掉线多次，已暂停自动重连；可手动重新加入', true);
+        } else {
+          remoteGuestReloads += 1;
+          // 记住身份，刷新后自动重连+登录。用会话建立时捕获的 selfId。
+          const rid = session.selfId || remoteProfileId;
+          if (remoteAllowed(rid)) {
+            try {
+              localStorage.setItem('manor.remoteResume', JSON.stringify({ id: rid, at: now }));
+            } catch (err) { /* ignore */ }
+          }
         }
       }
-      if (remoteReloadTimer) clearTimeout(remoteReloadTimer);
-      remoteReloadTimer = setTimeout(() => {
-        remoteReloadTimer = null;
-        try { window.location.reload(); } catch (err) {}
-      }, 2600);
+      if (doReload) {
+        if (remoteReloadTimer) clearTimeout(remoteReloadTimer);
+        remoteReloadTimer = setTimeout(() => {
+          remoteReloadTimer = null;
+          try { window.location.reload(); } catch (err) {}
+        }, 2600);
+      }
     }
   }
 

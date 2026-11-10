@@ -23,6 +23,9 @@ final class OtaStore {
     let bundleRoot: URL
     let baseDir: URL
     private let fm = FileManager.default
+    // state.json 的读-改-写可能来自安装（后台 task）与回退（主线程）两条路径，
+    // .atomic 只防撕裂不防丢失更新；用一把锁串行化所有状态写入。
+    private static let stateLock = NSLock()
 
     init(bundleRoot: URL? = nil, baseDir: URL? = nil) {
         if let bundleRoot {
@@ -115,6 +118,8 @@ final class OtaStore {
 
     /// 启动失败时回退到安装包；把坏版本记为 rejected，避免重启后再次装入。
     func deactivate(rejected: String? = nil) {
+        Self.stateLock.lock()
+        defer { Self.stateLock.unlock() }
         var state = readState()
         let active = state.activeVersion
         state.previousVersion = active ?? state.previousVersion
@@ -180,6 +185,8 @@ final class OtaStore {
             throw OtaError.io("安装离线包失败：\(error.localizedDescription)")
         }
 
+        Self.stateLock.lock()
+        defer { Self.stateLock.unlock() }
         let old = readState()
         var state = OtaState(
             activeVersion: manifest.version,

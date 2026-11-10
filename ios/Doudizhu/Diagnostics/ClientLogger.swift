@@ -71,18 +71,23 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
     }
 
     func stage(_ name: String, detail: [String: Any] = [:]) {
-        currentStage = name
+        // currentStage 只在 logger queue 上读写，避免主线程写/上传线程读的 String 竞态。
+        queue.async { self.currentStage = name }
         record("boot.stage", detail: ["stage": name].merging(detail) { _, new in new })
     }
 
     func resetReady() {
-        ready = false
-        warnCount = 0
+        queue.async {
+            self.ready = false
+            self.warnCount = 0
+        }
     }
 
     func markReady() {
-        ready = true
-        currentStage = "ready"
+        queue.async {
+            self.ready = true
+            self.currentStage = "ready"
+        }
         record("boot.ready", detail: ["version": appVersion, "webVersion": OtaStore().bundledVersion()])
         notify(Self.bootReady, message: nil)
         upload(reason: "boot.ready")
@@ -91,7 +96,7 @@ final class ClientLogger: NSObject, WKScriptMessageHandler {
     func recordBootError(_ message: String, detail: [String: Any] = [:]) {
         var merged = detail
         merged["message"] = message
-        merged["stage"] = currentStage
+        merged["stage"] = queue.sync { currentStage }
         record("boot.error", level: "error", detail: merged)
         notify(Self.bootFailure, message: message)
         upload(reason: "bootError")
