@@ -42,6 +42,10 @@ def read_version() -> dict:
 def build_www(dest: Path = WWW, *, version: str | None = None) -> dict:
     meta = read_version()
     if version:
+        # --version 覆盖也要校验：它会被插进 JS 字符串字面量和 HTML 属性，
+        # 非法字符会产出语法损坏的 boot.js/index.html 且静默退出 0。
+        if not re.fullmatch(r"[0-9A-Za-z._-]{1,32}", version):
+            raise SystemExit("--version 不合法")
         meta["version"] = version
     shutil.rmtree(dest, ignore_errors=True)
     (dest / "static").parent.mkdir(parents=True, exist_ok=True)

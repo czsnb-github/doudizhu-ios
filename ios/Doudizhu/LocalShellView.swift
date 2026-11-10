@@ -164,6 +164,11 @@ final class LocalShellModel: ObservableObject {
         watchdog?.cancel()
         watchdog = nil
         ready = false
+        // 以"本次实际服务的根"为准，而非 OTA store 状态：超时回退到安装包后
+        // store 里仍有健康离线包，若按 store 显示 overlayActive，后续故障会误把
+        // 健康版本记为 rejected。
+        overlayActive = (overlayRoot != nil)
+        activeVersion = overlayRoot != nil ? OtaStore().usedActiveVersion() : nil
         server?.stop()
         url = nil
         errorText = nil
@@ -262,7 +267,6 @@ final class LocalShellModel: ObservableObject {
         ready = true
         rescueText = nil
         errorText = nil
-        overlayActive = OtaStore().activeRoot() != nil
         setIdleTimer(url != nil)
     }
 

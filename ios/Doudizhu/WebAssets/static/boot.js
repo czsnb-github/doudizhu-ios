@@ -2,12 +2,13 @@
 (() => {
   'use strict';
 
-  const VERSION = '1794313268';
+  const VERSION = '1794316937';
   const APP_JS = `/static/app.js?v=${VERSION}`;
   let pyodide = null;
   let bridge = null;
   let activeSocket = null;
   let syncing = false;
+  let idbfsPopulated = false;
   let pendingLoginText = null;
 
   let currentStage = 'boot';
@@ -202,7 +203,9 @@
   }
 
   async function syncData() {
-    if (!pyodide || syncing) return;
+    // 只有 IDBFS 成功挂载并读取后才允许回写；否则一次读取失败后的空 /data
+    // 会被 syncfs(false) 当成权威，把 IndexedDB 里存好的档案/牌谱/快照清掉。
+    if (!pyodide || syncing || !idbfsPopulated) return;
     syncing = true;
     try {
       await new Promise((resolve) => pyodide.FS.syncfs(false, () => resolve()));
@@ -311,7 +314,8 @@
     window.fetch = async (input, init) => {
       const raw = typeof input === 'string' ? input : (input && input.url) || '';
       const url = new URL(raw, location.href);
-      if (!url.pathname.startsWith('/api/')) {
+      // 只劫持同源 /api/；跨源（如家庭服务器）绝对 URL 必须走真实网络。
+      if (url.origin !== location.origin || !url.pathname.startsWith('/api/')) {
         return realFetch(input, init);
       }
       try {
@@ -367,6 +371,11 @@
     deliverToUI(text);
   }
 
+  function escHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   window.manorNearbyEvent = function (event) {
     if (!event || typeof event !== 'object') return;
     const status = document.getElementById('nearby-status');
@@ -385,7 +394,7 @@
       if (!hosts) return;
       const list = Array.isArray(event.hosts) ? event.hosts : [];
       hosts.innerHTML = list.length
-        ? list.map((h) => `<button type="button" class="nearby-host" data-nearby-host="${String(h.id).replace(/"/g, '&quot;')}">${h.name}<small>加入</small></button>`).join('')
+        ? list.map((h) => `<button type="button" class="nearby-host" data-nearby-host="${escHtml(h.id)}">${escHtml(h.name)}<small>加入</small></button>`).join('')
         : '<div class="nearby-empty">还没找到，确认另一台 iPad 已经点了“开一桌”</div>';
       hosts.querySelectorAll('[data-nearby-host]').forEach((btn) => btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-nearby-host');
@@ -405,6 +414,9 @@
       setStatus(`家人 ${event.name} 已加入，等他准备`);
     } else if (event.type === 'peerleft') {
       setStatus(`家人 ${event.name} 离开了`);
+      // _host_ 侧必须把离开的客人从牌桌 detach，否则幽灵客户端让牌局永久卡住、
+      // 且 kick 会误判其"在线"而拒绝请离。host_leave 对非 host 是 no-op，可无条件调。
+      try { if (bridge) bridge.host_leave(String(event.name || '')); } catch (err) { /* ignore */ }
     } else if (event.type === 'disconnected') {
       const wasPeer = window.__manorPeerMode;
       window.__manorPeerMode = false;
@@ -721,6 +733,9 @@
     syncAndWait(2600).then(() => {
       if (pendingLoginText !== text) return;
       pendingLoginText = null;
+      // 等待期间若已加入联机房（peer mode），登录应走对端而非本机引擎，
+      // 否则本地登录态会和_peer_牌桌互相覆盖（split-brain）。
+      if (window.__manorPeerMode) return;
       try {
         bridge.handle(text);
       } catch (err) {
@@ -1972,11 +1987,13 @@
     }
     try {
       await new Promise((resolve, reject) => pyodide.FS.syncfs(true, (err) => err ? reject(err) : resolve()));
+      idbfsPopulated = true;
       setStage('idbfs.ready');
     } catch (err) {
+      idbfsPopulated = false;
       window.__MANOR_IDBFS_ERROR__ = String(err && err.message || err);
       trace('idbfs.syncFailed', { message: window.__MANOR_IDBFS_ERROR__ });
-      console.warn('本机数据读取失败，先以空数据启动', err);
+      console.warn('本机数据读取失败，先以空数据启动（禁止回写以免清空存档）', err);
     }
 
     setStage('bridge.init');
@@ -2027,7 +2044,12 @@ local_bridge.init('/data')
       if (document.visibilityState === 'visible') syncNow(true);
     }, 180000);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') syncNow(true);
+      if (document.visibilityState === 'visible') {
+        syncNow(true);
+      } else {
+        // 切后台立即把 MEMFS 写回 IDBFS；iOS 可能随后 jetsam，别等 pagehide。
+        syncData();
+      }
     });
     hideSplash();
     setStage('app.ready');

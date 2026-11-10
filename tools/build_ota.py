@@ -187,7 +187,8 @@ def main() -> None:
     parser.add_argument("--www", type=Path, default=DEFAULT_WWW)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--no-build", action="store_true")
-    parser.add_argument("--min-shell", default="0.5.0")
+    parser.add_argument("--min-shell", default=None,
+                        help="默认读 web-version.json 的 min_shell；显式指定才覆盖")
     args = parser.parse_args()
 
     www = args.www.resolve()
